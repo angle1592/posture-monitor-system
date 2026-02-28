@@ -1,0 +1,41 @@
+# === General ===
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+*.bak
+
+# === IDE ===
+.vscode/
+.idea/
+*.swp
+*.swo
+.hbuilderx/
+.history/
+.sisyphus/
+
+# === Python ===
+__pycache__/
+*.pyc
+*.pyo
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+venv/
+.env
+
+# === Node.js (App) ===
+app/node_modules/
+app/dist/
+app/unpackage/
+
+# === ESP32 / Arduino ===
+esp32/.pio/
+esp32/build/
+
+# === K230 Models (large binary) ===
+# Uncomment if you don't want to track the model file:
+# k230/models/*.kmodel
+
+# === Temp files ===
+_copy_projects.ps1

@@ -1,0 +1,18 @@
+{
+  "extends": "@vue/tsconfig/tsconfig.json",
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "verbatimModuleSyntax": false,
+    "sourceMap": true,
+    "baseUrl": ".",
+    "paths": { "@/*": ["./src/*"] },
+    "lib": ["esnext", "dom"],
+    "types": ["@dcloudio/types"],
+    "skipLibCheck": true,
+    "useDefineForClassFields": true
+  },
+  "include": ["src/**/*.ts", "src/**/*.d.ts", "src/**/*.tsx", "src/**/*.vue"]
+}

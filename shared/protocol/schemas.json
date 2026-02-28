@@ -1,0 +1,66 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Posture Monitor System Protocol",
+  "description": "Unified protocol definitions for K230 <-> ESP32 UART and ESP32 <-> OneNET MQTT communication",
+  "version": "1.0.0",
+
+  "definitions": {
+    "PostureType": {
+      "type": "string",
+      "enum": ["normal", "head_down", "hunchback", "tilt", "no_person", "unknown", "bad"],
+      "description": "Posture classification labels shared between K230 and ESP32"
+    },
+
+    "SystemMode": {
+      "type": "integer",
+      "enum": [0, 1, 2],
+      "description": "0=posture, 1=clock, 2=timer"
+    },
+
+    "SystemModeName": {
+      "type": "string",
+      "enum": ["posture", "clock", "timer"],
+      "description": "Human-readable system mode names used in App"
+    },
+
+    "AlertModeMask": {
+      "type": "integer",
+      "description": "Bitmask: bit0=LED, bit1=Buzzer, bit2=Voice",
+      "minimum": 0,
+      "maximum": 7
+    },
+
+    "K230UartFrame": {
+      "type": "object",
+      "description": "JSON frame sent from K230 to ESP32 via UART at 115200 baud",
+      "required": ["frame_id", "posture_type", "is_abnormal", "confidence"],
+      "properties": {
+        "frame_id":               { "type": "integer", "description": "Monotonically increasing frame counter" },
+        "posture_type":           { "$ref": "#/definitions/PostureType" },
+        "posture_type_fine":      { "type": "string", "description": "Fine-grained posture label (head_down/hunchback/tilt)" },
+        "is_abnormal":            { "type": "boolean" },
+        "consecutive_abnormal":   { "type": "integer", "minimum": 0 },
+        "confidence":             { "type": "number", "minimum": 0, "maximum": 1 },
+        "timestamp":              { "type": "integer", "description": "Unix timestamp (seconds)" },
+        "person_debug":           { "type": "object", "description": "Optional debug info about person detection" },
+        "posture_debug":          { "type": "object", "description": "Optional debug info about posture analysis" }
+      }
+    },
+
+    "MqttPropertyPost": {
+      "type": "object",
+      "description": "Properties reported by ESP32 to OneNET via MQTT",
+      "properties": {
+        "isPosture":          { "type": "boolean", "description": "true=normal posture, false=abnormal" },
+        "monitoringEnabled":  { "type": "boolean" },
+        "currentMode":        { "$ref": "#/definitions/SystemMode" },
+        "alertModeMask":      { "$ref": "#/definitions/AlertModeMask" },
+        "cooldownMs":         { "type": "integer", "description": "Alert cooldown in milliseconds" },
+        "timerDurationSec":   { "type": "integer", "description": "Timer duration in seconds" },
+        "timerRunning":       { "type": "boolean" },
+        "cfgVersion":         { "type": "integer" },
+        "selfTest":           { "type": "boolean" }
+      }
+    }
+  }
+}

@@ -1,0 +1,23 @@
+.DS_Store
+Thumbs.db
+
+# Arduino / build artifacts
+build/
+*.o
+*.obj
+*.elf
+*.bin
+*.map
+*.hex
+*.a
+
+# PlatformIO
+.pio/
+.vscode/
+
+# Logs
+*.log
+
+# Local environment files
+.env
+.env.*

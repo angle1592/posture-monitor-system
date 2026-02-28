@@ -1,0 +1,65 @@
+{
+  "pages": [
+    {
+      "path": "pages/index/index",
+      "style": {
+        "navigationBarTitleText": "坐姿监测",
+        "navigationBarTextStyle": "white",
+        "navigationBarBackgroundColor": "#0a0e1a"
+      }
+    },
+    {
+      "path": "pages/monitor/index",
+      "style": {
+        "navigationBarTitleText": "实时监控",
+        "navigationBarTextStyle": "white",
+        "navigationBarBackgroundColor": "#0a0e1a"
+      }
+    },
+    {
+      "path": "pages/history/index",
+      "style": {
+        "navigationBarTitleText": "历史记录",
+        "navigationBarTextStyle": "white",
+        "navigationBarBackgroundColor": "#0a0e1a"
+      }
+    },
+    {
+      "path": "pages/control/index",
+      "style": {
+        "navigationBarTitleText": "设备控制",
+        "navigationBarTextStyle": "white",
+        "navigationBarBackgroundColor": "#0a0e1a"
+      }
+    }
+  ],
+  "globalStyle": {
+    "navigationBarTextStyle": "white",
+    "navigationBarBackgroundColor": "#0a0e1a",
+    "backgroundColor": "#0a0e1a"
+  },
+  "tabBar": {
+    "list": [
+      {
+        "pagePath": "pages/index/index",
+        "text": "首页"
+      },
+      {
+        "pagePath": "pages/monitor/index",
+        "text": "监控"
+      },
+      {
+        "pagePath": "pages/history/index",
+        "text": "历史"
+      },
+      {
+        "pagePath": "pages/control/index",
+        "text": "控制"
+      }
+    ],
+    "color": "#64748b",
+    "selectedColor": "#00f0ff",
+    "backgroundColor": "#111827",
+    "borderStyle": "black"
+  }
+}
