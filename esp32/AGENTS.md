@@ -38,16 +38,18 @@ pio device monitor   # Serial monitor (115200 baud)
 
 ```
 posture_monitor/
-├── posture_monitor.ino   # Main firmware entry point
-├── config.h              # All configuration (pins, WiFi, MQTT, timing)
-├── utils.h               # Logging macros and utility functions
-├── mqtt_handler.h        # WiFi + MQTT connection and messaging
-├── k230_parser.h         # K230 UART data parsing
-├── mode_manager.h        # System mode switching (EC11 encoder)
-├── display.h             # OLED display (optional)
-├── sensors.h             # PIR + light sensors (optional)
-├── voice.h               # SYN-6288 voice synthesis (optional)
-└── alerts.h              # WS2812 LED + buzzer alerts
+├── posture_monitor.ino       # Main firmware entry point
+├── config.h                  # All configuration (pins, WiFi, MQTT, timing)
+├── platformio.ini            # PlatformIO build configuration
+├── timer_fsm.h / .cpp        # Timer & alert policy FSM (extracted from .ino)
+├── utils.h / .cpp            # Logging macros and utility functions
+├── mqtt_handler.h / .cpp     # WiFi + MQTT connection and messaging
+├── k230_parser.h / .cpp      # K230 UART data parsing
+├── mode_manager.h / .cpp     # System mode switching (EC11 encoder)
+├── display.h / .cpp          # OLED display (optional)
+├── sensors.h / .cpp          # PIR + light sensors (optional)
+├── voice.h / .cpp            # SYN-6288 voice synthesis (optional)
+└── alerts.h / .cpp           # WS2812 LED + buzzer alerts
 ```
 
 ---
@@ -208,8 +210,9 @@ inline bool k230_init();
 
 ## File Naming
 
-- Header files: `lowercase.h`
-- All modules are header-only (`.h` files, no `.cpp` separation)
+- Header files: `lowercase.h` (declarations only, no implementations)
+- Implementation files: `lowercase.cpp` (all function bodies)
+- Each module is split into `.h` (declarations) + `.cpp` (implementations)
 - Main sketch: `posture_monitor.ino`
 
 ---
