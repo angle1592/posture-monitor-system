@@ -1,5 +1,20 @@
 #include "voice.h"
 
+/**
+ * @brief voice.cpp 实现说明
+ *
+ * 实现要点：
+ * - 按 SYN-6288 协议拼帧：帧头 0xFD + 长度 + 命令字 + 参数 + 负载。
+ * - 常用中文短语优先发送“固定字节包”，规避不同源码编码环境导致的乱码/静音问题。
+ * - 通用文本路径通过 "[v8][t3]" 前缀控制音量和语速，再封装为协议帧发送。
+ * - 通过 _voiceBusy/_voiceBusyUntil 维护忙碌窗口，避免播报队列堆积。
+ *
+ * 内部状态变量含义：
+ * - _voiceBusy：逻辑忙碌标志（正在播报或等待回传结束）。
+ * - _voiceBusyUntil：超时兜底时间点，防止回传异常导致永久忙碌。
+ * - _voiceFeedbackLogEnabled：是否打印模块回传字节。
+ */
+
 // Static variables
 static bool _voiceBusy = false;
 static unsigned long _voiceBusyUntil = 0;
@@ -10,6 +25,11 @@ static HardwareSerial& _voiceSerial = Serial2;
 
 // Internal helper functions
 static void _voiceSendFrame(const uint8_t* payload, uint16_t len, uint8_t frameParam) {
+    // SYN-6288 帧格式：
+    // [0] 0xFD
+    // [1..2] 数据区长度（命令字+参数+payload）
+    // [3] 命令字（0x01=文本合成）
+    // [4] 参数字节（编码/背景音等）
     uint8_t head[5];
     head[0] = 0xFD;
     head[1] = (uint8_t)((len + 2) >> 8);
@@ -27,6 +47,7 @@ static void _voiceSendRaw(const char* text, bool appendCrlf) {
     }
     _voiceSerial.write((const uint8_t*)text, strlen(text));
     if (appendCrlf) {
+        // 某些调试模式下模块按行处理命令，可选追加换行。
         _voiceSerial.write('\r');
         _voiceSerial.write('\n');
     }
@@ -68,7 +89,7 @@ static bool _voiceSendKnownPacketByText(const char* text) {
         return false;
     }
 
-    // 已验证可用的固定中文语音包（按当前SYN6288模组实测协议整理）。
+    // 已验证可用的固定中文语音包（按当前 SYN-6288 模组实测协议整理）。
     // 优先走固定包，避免不同编译环境下中文字符串编码不一致导致“有日志无声音”。
 
     const uint8_t* packet = NULL;
@@ -106,12 +127,14 @@ static bool _voiceSendKnownPacketByText(const char* text) {
 // Function implementations
 void voice_init() {
 #if ENABLE_VOICE
+    // 启用语音模块时使用 Serial2 独立通道，避免占用调试串口。
     _voiceSerial.begin(VOICE_BAUD, SERIAL_8N1, VOICE_RX_PIN, VOICE_TX_PIN);
     _voiceBusy = false;
     _voiceBusyUntil = 0;
     _voiceFeedbackLogEnabled = false;
     LOGI("语音模块初始化完成: TX=GPIO%d, RX=GPIO%d, baud=%d", VOICE_TX_PIN, VOICE_RX_PIN, VOICE_BAUD);
 #else
+    // 关闭语音功能时仅保留日志，接口仍可被上层安全调用。
     LOGI("语音模块未启用（ENABLE_VOICE=0）");
 #endif
 }
@@ -139,6 +162,7 @@ void voice_speak(const char* text) {
 
     size_t len = strlen(payload);
     if (len > 240) {
+        // 长度受协议与缓冲约束限制，过长内容截断发送。
         len = 240;
     }
 
@@ -170,6 +194,7 @@ void voice_speakWithParam(const char* text, uint8_t frameParam) {
     snprintf(payload, sizeof(payload), "[v8][t3]%s", text);
     size_t len = strlen(payload);
     if (len > 240) {
+        // 与主播报路径一致，避免超长负载写出协议上限。
         len = 240;
     }
 
@@ -189,6 +214,7 @@ void voice_speakGbk(const uint8_t* gbkBytes, size_t byteLen, uint8_t frameParam)
         return;
     }
     if (byteLen > 240) {
+        // GBK 路径假定调用方已完成编码，仅负责按协议发送与长度保护。
         byteLen = 240;
     }
 
@@ -260,6 +286,7 @@ void voice_setFeedbackLogEnabled(bool enabled) {
 
 void voice_update() {
 #if ENABLE_VOICE
+    // 回传字节轮询：0x4F 常作为“播报完成”信号，收到后可提前清 busy。
     while (_voiceSerial.available() > 0) {
         int b = _voiceSerial.read();
         if (b < 0) {
@@ -277,6 +304,7 @@ void voice_update() {
     }
 
     if (_voiceBusy && millis() >= _voiceBusyUntil) {
+        // 回传缺失时用超时释放 busy，防止上层长期无法触发下一条播报。
         _voiceBusy = false;
     }
 #endif

@@ -1,13 +1,24 @@
-// OneNET IoT HTTP API — 已通过实际请求验证全部4个端点
-// Base: iot-api.heclouds.com (物联网套件API，非openapi.heclouds.com)
-// Auth: device-level token, res=products/{pid}/devices/{devname}, method=md5
-// Credentials loaded from .env (VITE_ONENET_*)
+/*
+ * 模块职责：OneNET 云平台 HTTP API 封装层。
+ *
+ * 认证流程：
+ * 1) 通过 `.env` 注入 `VITE_ONENET_PRODUCT_ID / VITE_ONENET_DEVICE_NAME / VITE_ONENET_TOKEN`。
+ * 2) 请求时把 token 放入 `authorization` 请求头。
+ * 3) 设备维度由 `product_id + device_name` 唯一确定，接口按该设备读写属性。
+ *
+ * 与其他模块关系：
+ * - store.ts 通过本模块获取属性流、设备在线状态并下发控制指令。
+ * - constants.ts 提供默认超时等协议参数，本模块负责网络交互与错误归一化。
+ */
 
 import { DEVICE_DEFAULTS } from './constants'
 
 const CONFIG = {
+  // 物模型相关接口基地址：查询属性/历史、设置属性。
   thingmodelBase: 'https://iot-api.heclouds.com/thingmodel',
+  // 设备详情接口基地址：用于判定在线状态。
   deviceBase: 'https://iot-api.heclouds.com/device',
+  // 以下凭据来自 .env；为空时请求会失败并进入统一错误处理。
   productId: import.meta.env.VITE_ONENET_PRODUCT_ID || '',
   deviceName: import.meta.env.VITE_ONENET_DEVICE_NAME || '',
   token: import.meta.env.VITE_ONENET_TOKEN || '',
@@ -74,6 +85,10 @@ function request<T>(
   method: 'GET' | 'POST' = 'GET',
   data?: Record<string, unknown>
 ): Promise<T> {
+  // 统一错误策略：
+  // - HTTP 非 200 -> 直接失败
+  // - OneNET code 非 0 -> 按业务错误失败
+  // - 网络失败 -> 返回网络错误
   return new Promise((resolve, reject) => {
     uni.request({
       url,
@@ -104,6 +119,7 @@ function request<T>(
 }
 
 function qs(params: Record<string, string | number>): string {
+  // 仅负责基础 query string 拼装，避免在各 API 方法里重复拼接。
   return Object.entries(params).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&')
 }
 
@@ -115,6 +131,8 @@ function qs(params: Record<string, string | number>): string {
  */
 export async function queryDeviceProperty(): Promise<PropertyItem[] | null> {
   try {
+    // 端点：GET /thingmodel/query-device-property
+    // 返回：属性数组；异常时返回 null，交由上层走兜底逻辑。
     const q = qs({ product_id: CONFIG.productId, device_name: CONFIG.deviceName })
     const result = await request<PropertyItem[]>(`${CONFIG.thingmodelBase}/query-device-property?${q}`)
     return Array.isArray(result) ? result : null
@@ -131,6 +149,9 @@ export async function queryDeviceProperty(): Promise<PropertyItem[] | null> {
 export async function setDeviceProperty(
   params: Record<string, PropertyValue | PropertyValue[]>
 ): Promise<boolean> {
+  // 端点：POST /thingmodel/set-device-property
+  // 入参：params 为 { identifier: value } 的键值映射。
+  // 返回：true=至少一次提交成功；false=失败（含重试失败）。
   const blockedIdentifiers = new Set<string>()
   let firstError: unknown = null
   try {
@@ -151,7 +172,7 @@ export async function setDeviceProperty(
   }
 
   // OneNET 在 identifier 不存在时会整包失败。
-  // 这里抽取出坏字段并重试一次，尽量让合法字段成功落云。
+  // 这里抽取坏字段并重试一次，尽量让其余合法字段成功下发。
   const invalidIdentifier = extractInvalidIdentifier(firstError)
   if (!invalidIdentifier || !isIdentifierNotExistError(firstError)) {
     console.error('[OneNET] 设置属性失败:', firstError)
@@ -189,6 +210,8 @@ export async function queryPropertyHistory(
   days: number = 7
 ): Promise<HistoryDataPoint[]> {
   try {
+    // 端点：GET /thingmodel/query-device-property-history
+    // 返回：{ list: HistoryDataPoint[] }；异常时返回空数组。
     const end_time = Date.now()
     const start_time = end_time - days * 86400000
     const q = qs({
@@ -216,6 +239,8 @@ export async function queryPropertyHistory(
  */
 export async function queryDeviceStatus(): Promise<boolean> {
   try {
+    // 端点：GET /device/detail
+    // 判定策略：status=1 且 last_time 未超时，才视为在线。
     const q = qs({ product_id: CONFIG.productId, device_name: CONFIG.deviceName })
     const result = await request<DeviceDetail>(`${CONFIG.deviceBase}/detail?${q}`)
     if (result.status !== 1) {
@@ -242,6 +267,7 @@ export async function queryDeviceStatus(): Promise<boolean> {
 // ===== 配置管理 =====
 
 export function getConfig() {
+  // 仅用于调试展示，避免直接泄露 token 明文。
   return {
     baseUrl: CONFIG.thingmodelBase,
     productId: CONFIG.productId,
@@ -251,11 +277,13 @@ export function getConfig() {
 }
 
 export function updateToken(newToken: string) {
+  // 运行时切换 token（如设置页临时更新）并持久化到本地。
   CONFIG.token = newToken
   uni.setStorageSync('oneNetToken', newToken)
 }
 
 export function restoreToken() {
+  // 启动阶段恢复本地 token，覆盖 .env 默认值。
   const saved = uni.getStorageSync('oneNetToken') as string
   if (saved) CONFIG.token = saved
 }

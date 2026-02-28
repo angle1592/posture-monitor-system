@@ -1,8 +1,14 @@
 """
-Project configuration for K230Vision.
+K230 视觉模块配置中心。
 
-This module centralizes runtime parameters to keep main logic clean and
-make deployment tuning easier.
+模块职责：
+- 集中维护模型路径、推理阈值、摄像头参数、UART 参数与姿态判定阈值。
+- 将“算法逻辑”和“部署调参”解耦，便于毕业设计答辩时解释参数影响。
+
+与其他模块的关系：
+- `main.py` 读取 `APP_CONFIG` 控制主循环、UART 与性能统计行为。
+- `pose_detector.py` 读取 `MODEL_CONFIG`、`PERSON_FILTER`、`POSTURE_THRESHOLDS` 完成检测与姿态判定。
+- `camera.py` 读取摄像头/预览相关配置初始化硬件。
 """
 
 # 模型相关配置（影响“是否能检出人”与关键点稳定性）
@@ -50,11 +56,17 @@ APP_CONFIG = {
     "abnormal_threshold": 2,
     # 是否启用 ESP32 UART 输出
     "enable_esp32_uart": True,
+    # UART 控制器编号（对应 machine.UART 的设备号）
     "uart_id": 1,
+    # UART 波特率（需与 ESP32 端完全一致）
     "uart_baudrate": 115200,
+    # UART TX 引脚号（K230 发往 ESP32 RX）
     "uart_tx_pin": 3,
+    # UART RX 引脚号（K230 接收 ESP32 TX）
     "uart_rx_pin": 4,
+    # 是否保存采集图像（调试用，开启会增加存储与IO开销）
     "save_images": False,
+    # 全局调试开关（影响 logger 输出级别）
     "debug": False,
     # IDE 预览开关与参数
     "ide_preview": False,
@@ -76,6 +88,7 @@ APP_CONFIG = {
 }
 
 # 人体存在过滤参数（只影响是否输出 no_person，不影响姿态算法本体）
+# 数据流位置：YOLO 输出 -> 人体存在过滤 -> 通过后才进入姿态类型判定。
 PERSON_FILTER = {
     # 人体存在置信度阈值
     # 含义：最佳人体框 confidence 低于该值则判 no_person。
@@ -96,7 +109,11 @@ PERSON_FILTER = {
 
 # 姿态判定参数（关键点几何特征 + 风险分数 + 迟滞）
 POSTURE_THRESHOLDS = {
+    # posture_mode: 姿态判定模式
+    # - legacy: 经典风险融合路径（便于平滑和迟滞）
+    # - decoupled: 分类分支解耦路径（便于解释 head_down/hunchback/tilt 的分值）
     "posture_mode": "legacy",
+    # posture_profile: 当前阈值配置版本标签，便于记录调参批次
     "posture_profile": "legacy_20260221222815",
     # 几何特征上限（超过即增加异常风险）
     # torso_tilt_max_deg: 躯干偏离竖直方向的容忍角度（度）

@@ -1,3 +1,15 @@
+"""
+摄像头模块封装。
+
+模块职责：
+- 完成 K230 摄像头、预览显示层与媒体管线初始化。
+- 提供单帧采集与连续采集接口，供主循环调用。
+
+与其他模块的关系：
+- `main.py` 通过 `CameraModule` 获取图像帧，再交给 `pose_detector.py` 推理。
+- `config.py` 中的摄像头参数会直接影响本模块初始化行为与帧质量。
+"""
+
 import time
 
 from media.sensor import Sensor
@@ -16,9 +28,32 @@ from canmv_api import ensure_dir
 
 
 class CameraModule:
+    """
+    K230 摄像头管理类。
+
+    类职责：
+    - 管理传感器对象生命周期（初始化、采集、反初始化）。
+    - 统一处理采集通道与预览通道配置。
+
+    关键属性含义：
+    - `sensor_device`：底层 Sensor 实例。
+    - `channel`：AI 推理取帧通道。
+    - `preview_channel`：IDE/显示预览通道。
+    - `is_initialized`：摄像头是否可安全采帧。
+    """
+
     def __init__(
         self, framesize=None, pixformat=None, sensor_id=2, channel=CAM_CHN_ID_0
     ):
+        """
+        初始化摄像头模块对象。
+
+        为什么这样做：
+        - 构造阶段只保存配置，不立刻访问硬件，便于主程序统一控制初始化时机。
+
+        返回：
+        - 无返回值。
+        """
         self.framesize = framesize
         self.pixformat = pixformat
         self.sensor_id = sensor_id
@@ -36,6 +71,16 @@ class CameraModule:
         self.logger = get_logger("camera", APP_CONFIG.get("debug", False))
 
     def initialize(self):
+        """
+        初始化摄像头、显示层和媒体管理器。
+
+        为什么这样做：
+        - 将硬件启动步骤集中在一个入口，出现问题时更容易定位。
+
+        返回：
+        - `True` 表示初始化成功。
+        - `False` 表示初始化失败。
+        """
         try:
             print("[*] 正在初始化K230摄像头...")
 
@@ -108,6 +153,16 @@ class CameraModule:
             return False
 
     def capture_frame(self, save_path=None):
+        """
+        采集单帧图像，可选保存到文件。
+
+        为什么这样做：
+        - 主循环按帧调用该接口，保持“采集-推理-发送”数据流清晰。
+
+        返回：
+        - 成功时返回图像对象。
+        - 失败时返回 `None`。
+        """
         if not self.is_initialized:
             print("[-] 摄像头未初始化，请先调用initialize()")
             return None
@@ -141,9 +196,27 @@ class CameraModule:
             return None
 
     def capture_preview_frame(self):
+        """
+        预留的预览帧接口。
+
+        为什么这样做：
+        - 为后续扩展预览抓帧能力保留方法签名，避免影响调用方。
+
+        返回：
+        - 当前固定返回 `None`。
+        """
         return None
 
     def capture_continuous(self, callback, interval_ms=100, max_frames=None):
+        """
+        按固定间隔连续采集并回调处理。
+
+        为什么这样做：
+        - 适合离线采集或调试，不影响主程序常规单帧流程。
+
+        返回：
+        - 无返回值，采集结果通过 `callback` 回传。
+        """
         if not self.is_initialized:
             print("[-] 摄像头未初始化")
             return
@@ -169,6 +242,15 @@ class CameraModule:
         print("[+] 共采集 {} 帧".format(frame_count))
 
     def set_windowing(self, roi):
+        """
+        设置传感器采集窗口（ROI）。
+
+        为什么这样做：
+        - 可将采集焦点限制在画面局部，减少无关区域干扰。
+
+        返回：
+        - 无返回值。
+        """
         try:
             if self.sensor_device is None:
                 return
@@ -178,6 +260,12 @@ class CameraModule:
             print("[-] 设置窗口失败: {}".format(str(e)))
 
     def print_info(self):
+        """
+        打印当前摄像头配置与状态信息。
+
+        返回：
+        - 无返回值。
+        """
         print("\n" + "=" * 50)
         print("K230摄像头信息")
         print("=" * 50)
@@ -188,6 +276,15 @@ class CameraModule:
         print("=" * 50 + "\n")
 
     def deinit(self):
+        """
+        关闭摄像头及相关显示/媒体资源。
+
+        为什么这样做：
+        - 主程序退出时需要显式释放硬件资源，避免下次启动冲突。
+
+        返回：
+        - 无返回值。
+        """
         try:
             if self.sensor_device is None:
                 return

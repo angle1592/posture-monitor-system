@@ -142,6 +142,13 @@ import { queryPropertyHistory } from '@/utils/oneNetApi'
 import type { HistoryDataPoint, PropertyValue } from '@/utils/oneNetApi'
 import { formatLocalDate } from '@/utils/date'
 
+/*
+ * 页面职责：历史数据页。
+ * - 展示当天/昨天/最近7天的健康趋势、统计摘要与异常记录。
+ * - 优先使用 OneNET 历史属性流；无历史时回退到本地估算数据。
+ * - 保证图表、统计、列表三者的数据口径一致。
+ */
+
 interface DayData {
   label: string
   score: number
@@ -225,6 +232,7 @@ function applySelectionStats() {
     return
   }
 
+  // 先根据当前筛选范围裁剪点位，再统一计算 good/abnormal/score，避免多套统计逻辑分叉。
   let scopedPoints: HistoryDataPoint[] = []
   if (selectedDateKey.value === 'range7') {
     // 7天视图用 weekData 的日期集合做裁剪，保证图表和列表口径一致。
@@ -275,6 +283,7 @@ function initWeekData() {
 
 async function fetchHistoryData() {
   try {
+    // 拉取最近 7 天 isPosture 历史流，并按天聚合分数。
     const history = await queryPropertyHistory('isPosture', 7)
     historyPoints.value = history
     if (history.length > 0) {
@@ -314,6 +323,7 @@ async function fetchHistoryData() {
 }
 
 function showDatePicker() {
+  // 日期筛选仅改变“视图口径”，不会触发额外网络请求。
   uni.showActionSheet({
     itemList: ['今天', '昨天', '最近7天'],
     success: (res) => {

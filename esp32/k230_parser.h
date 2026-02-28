@@ -24,6 +24,28 @@
 #ifndef K230_PARSER_H
 #define K230_PARSER_H
 
+/**
+ * @brief K230 串口解析模块（视觉结果接入层）
+ *
+ * 模块职责：
+ * - 从 UART 非阻塞接收 K230 输出的逐帧文本/JSON 数据。
+ * - 使用轻量字符串策略解析 posture_type、is_abnormal 等关键字段。
+ * - 维护最近一帧有效姿态数据与通信健康状态（超时、静默等）。
+ *
+ * 对外提供的核心 API：
+ * - k230_init() / k230_read()
+ * - k230_getData() / k230_isTimeout()
+ * - k230_getFrameCount() / k230_hasSeenAnyByte() / k230_getSilenceMs()
+ *
+ * 依赖关系：
+ * - Arduino Serial1 / millis
+ * - config.h（串口引脚、恢复阈值等参数）
+ * - utils.h（日志输出）
+ *
+ * 是否可选：
+ * - 非可选核心模块；若 K230 链路不可用，主姿态检测业务会降级。
+ */
+
 #include <Arduino.h>
 #include "config.h"
 #include "utils.h"
@@ -50,21 +72,25 @@ typedef struct {
 
 /**
  * @brief 初始化 K230 UART 通信
- * 
+ *
  * 使用硬件 UART1（Serial1），引脚 GPIO17(TX) / GPIO18(RX)。
+ * 同时会重置解析统计和链路状态，进入冷启动监听阶段。
  */
 void k230_init();
 
 /**
  * @brief 非阻塞读取 K230 UART 数据
- * 
+ *
  * 在 loop() 中调用。按 \n 分帧，完整一行后解析 JSON。
  * 不会阻塞——如果没有数据立即返回。
+ * 内部同时维护 JSON 流式捕获，增强抗噪声能力。
  */
 void k230_read();
 
 /**
  * @brief 获取最新的 K230 数据
+ *
+ * 返回内部静态结构体地址，调用方应按“只读快照”使用。
  * @return K230Data 结构体的指针
  */
 const K230Data* k230_getData();
@@ -72,12 +98,16 @@ const K230Data* k230_getData();
 /**
  * @brief 检测 K230 是否超时（未收到数据）
  * @param timeoutMs 超时阈值（毫秒）
+ *
+ * 常用于主循环判断是否进入通信异常分支。
  * @return true K230 数据已超时
  */
 bool k230_isTimeout(unsigned long timeoutMs);
 
 /**
  * @brief 获取接收帧计数
+ *
+ * 仅统计解析成功并写入 _k230Data 的有效帧。
  */
 unsigned long k230_getFrameCount();
 

@@ -1,5 +1,21 @@
 #include "k230_parser.h"
 
+/**
+ * @brief k230_parser.cpp 实现说明
+ *
+ * 实现要点：
+ * - 同时支持“按行分隔解析”和“JSON 流状态机解析”两条路径，提升串口抗噪与恢复能力。
+ * - 核心 JSON 解析不依赖 ArduinoJson，而是使用 strstr/strchr/strtol/strtod 做字段定位与严格校验。
+ * - 对 posture_type、is_abnormal、consecutive_abnormal、confidence 逐项校验，拒绝脏数据写入。
+ * - 提供静默恢复机制：长时间无字节时重建 Serial1，避免链路偶发卡死。
+ *
+ * 内部状态变量含义（节选）：
+ * - _k230Data：最近一次有效解析结果。
+ * - _k230LineBuf/_k230BufPos：按行接收缓冲与写入位置。
+ * - _k230Json*：流式 JSON 捕获状态（深度、字符串态、转义态）。
+ * - _k230Reject*：各类解析失败计数，用于诊断输入格式问题。
+ */
+
 // =============================================================================
 // 内部状态
 // =============================================================================
@@ -90,6 +106,8 @@ static const char* _k230SkipSpaces(const char* p) {
 }
 
 static const char* _k230FindKeyValueStart(const char* json, const char* keyPattern) {
+    // 策略：先用 strstr 定位 key，再跳过空白和冒号，返回 value 的起始位置。
+    // 该策略开销低、可控，适合 MCU 场景的已知结构 JSON。
     const char* key = strstr(json, keyPattern);
     if (key == NULL) return NULL;
 
@@ -155,6 +173,7 @@ static bool _k230ParseTextLine(const char* line) {
         return false;
     }
 
+    // 若行内已含 posture_type，说明更可能是 JSON 数据，交给 JSON 路径处理。
     if (strstr(line, "\"posture_type\"") != NULL) {
         return false;
     }
@@ -209,6 +228,7 @@ static void _k230FeedJsonStream(char c) {
         return;
     }
 
+    // 持续写入 JSON 缓冲；若超长则尝试“最后一次抢救解析”后丢弃本对象。
     if (_k230JsonPos < (int)sizeof(_k230JsonBuf) - 1) {
         _k230JsonBuf[_k230JsonPos++] = c;
     } else {
@@ -304,11 +324,17 @@ static void _k230RecoverUart(const char* reason) {
 static bool _k230Parse(const char* json) {
     _k230ParseAttemptCount++;
 
+    // 解析策略说明：
+    // 1) 先通过 key 锚点定位字段起点（strstr）。
+    // 2) 对数值字段使用 strtol/strtod 并验证终止符，避免把 "12abc" 当作合法值。
+    // 3) 全部字段通过后再一次性写入 _k230Data，避免半解析状态污染。
+
     char postureType[sizeof(_k230Data.postureType)];
     bool isAbnormal = false;
     int consecutiveAbnormal = 0;
     float confidence = 0.0f;
 
+    // posture_type 是帧有效性的主锚点，缺失则整帧丢弃。
     const char* ptValue = _k230FindKeyValueStart(json, "\"posture_type\"");
     if (ptValue == NULL || *ptValue != '"') {
         _k230RejectMissingPostureType++;
@@ -330,6 +356,7 @@ static bool _k230Parse(const char* json) {
     }
 
     // --- 解析 is_abnormal ---
+    // 仅接受 true/false 字面量，拒绝 0/1 或其他变体，保持协议一致性。
     const char* abValue = _k230FindKeyValueStart(json, "\"is_abnormal\"");
     if (abValue == NULL) {
         _k230RejectIsAbnormal++;
@@ -345,6 +372,7 @@ static bool _k230Parse(const char* json) {
     }
 
     // --- 解析 consecutive_abnormal ---
+    // 连续异常帧数必须是严格整型，且后续字符必须为 JSON 分隔符。
     const char* caValue = _k230FindKeyValueStart(json, "\"consecutive_abnormal\"");
     if (!_k230ParseIntStrict(caValue, &consecutiveAbnormal)) {
         _k230RejectConsecutive++;
@@ -352,6 +380,7 @@ static bool _k230Parse(const char* json) {
     }
 
     // --- 解析 confidence ---
+    // 置信度按浮点读取，并额外校验范围 [0,1]。
     const char* cfValue = _k230FindKeyValueStart(json, "\"confidence\"");
     if (!_k230ParseFloatStrict(cfValue, &confidence)) {
         _k230RejectConfidence++;
@@ -364,6 +393,7 @@ static bool _k230Parse(const char* json) {
     }
 
     if (strcmp(postureType, "no_person") == 0) {
+        // 协议约定：无人时不视为异常，连续异常数清零。
         isAbnormal = false;
         consecutiveAbnormal = 0;
     }
@@ -426,6 +456,7 @@ static void _k230HandleDelimiter() {
              (int)sizeof(_k230LineBuf) - 1);
     }
 
+    // 行兜底策略：即使前面是噪声，只要本行包含 '{'，仍尝试从 JSON 起点恢复解析。
     const char* jsonStart = strchr(_k230LineBuf, '{');
     if (jsonStart != NULL) {
         // 若 JSON 流模式本轮未成功解析，仍尝试按"行分隔"兜底恢复一帧。
@@ -460,6 +491,7 @@ static void _k230AppendLineByte(char c) {
         LOGW("[K230] 行缓冲区溢出，等待换行后进行截断解析");
         _k230LineTruncated = true;
     }
+    // 溢出后清空当前行，等待下一个分隔符重新同步，避免持续写越界。
     _k230BufPos = 0;
 }
 
@@ -470,6 +502,7 @@ static void _k230LogDiagnostics(unsigned long now) {
 
     _k230LastDiagLogTime = now;
     if (!_k230SeenAnyByte) {
+        // 启动后长期无字节，优先提示硬件链路问题（供电/接线/串口配置）。
         LOGW("[K230] 3秒内未收到任何串口字节，请检查K230是否启用UART输出、TX/RX接线和GND共地");
         return;
     }

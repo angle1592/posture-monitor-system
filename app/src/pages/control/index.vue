@@ -192,6 +192,13 @@ import SectionHeader from '@/components/ui/SectionHeader.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
 import { setDeviceProperty } from '@/utils/oneNetApi'
 
+/*
+ * 页面职责：设备控制页。
+ * - 下发模式切换、提醒方式、定时参数与硬件自检指令。
+ * - 采用“先本地回显，再远端提交，失败回滚”的交互策略。
+ * - 页面激活时提升轮询频率，保证控制反馈及时。
+ */
+
 interface ControlPageSettings {
   selectedMode?: string
   selectedReminders?: string[]
@@ -261,6 +268,7 @@ async function syncVoiceCompat(enabled: boolean) {
 }
 
 function loadSettings() {
+  // 页面私有设置与全局 store 分离存储，避免互相覆盖。
   try {
     const saved = uni.getStorageSync('controlPageSettings') as ControlPageSettings | undefined
     if (saved) {
@@ -321,6 +329,7 @@ async function toggleReminder(value: string) {
     selectedReminders.value.push(value)
   }
 
+  // 将多选提醒项收敛为 alertModeMask 位掩码后下发到设备。
   const success = await setDeviceProperty({
     alertModeMask: getReminderMask(selectedReminders.value),
   })

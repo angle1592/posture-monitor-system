@@ -1,7 +1,13 @@
-/**
- * MQTT客户端工具类
- * 用于uni-app中进行MQTT通信
- * 兼容JS版本，适用于Vue3项目
+/*
+ * 模块职责：MQTT 客户端单例封装，为 uni-app 提供发布/订阅能力。
+ *
+ * 数据流：
+ * - 上行：页面或业务模块调用 publish() 向指定 topic 发送消息。
+ * - 下行：底层 client 收到 message 后，经 handleMessage() 按 topic 分发到回调队列。
+ *
+ * 平台差异：
+ * - APP/H5：依赖 mqtt.js（WebSocket 协议）建立真实连接。
+ * - MP-WEIXIN：当前实现明确报错或仅日志占位，避免误判“已连接可用”。
  */
 
 class MQTTClient {
@@ -42,6 +48,7 @@ class MQTTClient {
         return;
       }
 
+      // APP/H5 分支：要求全局已注入 mqtt 对象。
       // #ifdef APP-PLUS || H5
       if (typeof mqtt !== 'undefined') {
         this.connectWithMQTTjs(resolve, reject);
@@ -50,6 +57,7 @@ class MQTTClient {
       }
       // #endif
 
+      // 小程序分支：当前不提供可用 MQTT 通道，直接失败提示调用方兜底。
       // #ifdef MP-WEIXIN
       // 小程序端这里显式失败，避免“看似连接成功但实际不可用”的假状态。
       reject(new Error('微信小程序需要使用原生Socket实现MQTT'));
@@ -62,6 +70,7 @@ class MQTTClient {
    */
   connectWithMQTTjs(resolve, reject) {
     try {
+      // 按 useSSL 选择 ws/wss，统一追加 /mqtt 路径。
       const protocol = this.config.useSSL ? 'wss' : 'ws';
       const url = `${protocol}://${this.config.host}:${this.config.port}/mqtt`;
       
@@ -83,6 +92,7 @@ class MQTTClient {
       });
 
       this.client.on('message', (topic, message) => {
+        // 所有下行消息统一进入分发入口，便于后续扩展通配符匹配。
         this.handleMessage(topic, message);
       });
 
@@ -138,6 +148,7 @@ class MQTTClient {
         return;
       }
 
+      // 先记录本地回调，再向 broker 发送订阅请求。
       if (!this.messageCallbacks.has(topic)) {
         this.messageCallbacks.set(topic, []);
       }
@@ -207,6 +218,7 @@ class MQTTClient {
         return;
       }
 
+      // 统一将对象消息序列化，保证传输层 payload 为字符串。
       let messageStr = message;
       if (typeof message === 'object') {
         messageStr = JSON.stringify(message);

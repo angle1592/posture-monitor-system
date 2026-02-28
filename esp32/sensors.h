@@ -14,6 +14,28 @@
 #ifndef SENSORS_H
 #define SENSORS_H
 
+/**
+ * @brief 传感器采集模块（PIR + 光照，可选）
+ *
+ * 模块职责：
+ * - 管理 PIR 人体红外与光敏 ADC 的初始化和周期采样。
+ * - 对上层提供统一读数接口，屏蔽硬件启用/禁用差异。
+ *
+ * 对外提供的核心 API：
+ * - sensors_init() / sensors_update()
+ * - sensors_isPersonPresent() / sensors_getLightLevel()
+ *
+ * 依赖关系：
+ * - Arduino GPIO/ADC 读写接口
+ * - config.h（ENABLE_PIR、ENABLE_LIGHT_SENSOR 与引脚定义）
+ * - utils.h（日志输出）
+ *
+ * 是否可选：
+ * - PIR 受 ENABLE_PIR 控制。
+ * - 光照传感器受 ENABLE_LIGHT_SENSOR 控制。
+ * - 未启用时返回安全默认值，保证主流程可运行。
+ */
+
 #include <Arduino.h>
 #include "config.h"
 #include "utils.h"

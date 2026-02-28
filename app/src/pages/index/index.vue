@@ -181,7 +181,13 @@ import SectionHeader from '@/components/ui/SectionHeader.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
 import StatCard from '@/components/ui/StatCard.vue'
 
-// 计算属性
+/*
+ * 页面职责：首页总览。
+ * - 汇总展示在线状态、实时姿势、健康评分与快捷入口。
+ * - 主要消费 store 中的衍生数据，避免在页面重复业务计算。
+ */
+
+// 计算属性：将全局健康评分拆分为“良好/异常”占比，供进度条直接渲染。
 const goodPercent = computed(() => store.healthScore)
 const badPercent = computed(() => 100 - store.healthScore)
 const scoreLevel = computed(() => {

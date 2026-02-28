@@ -1,5 +1,20 @@
 #include "display.h"
 
+/**
+ * @brief display.cpp 实现说明
+ *
+ * 实现要点：
+ * - 通过缓存状态变量（连接状态、定时器状态、短消息窗口）与渲染函数解耦。
+ * - display_update() 按 mode 分页面渲染：坐姿页、时钟页、定时器页。
+ * - 短消息窗口优先级高于主页面，保障提示信息可完整显示。
+ *
+ * 内部状态变量含义：
+ * - _displayReady：OLED 是否已初始化。
+ * - _displayWifiConnected/_displayMqttConnected：连接状态缓存。
+ * - _displayTimerRemainSec/_displayTimerTotalSec/_displayTimerState：定时器显示缓存。
+ * - _displayMsg1/_displayMsg2/_displayMsgUntil：短消息文本与过期时间。
+ */
+
 // Static variables
 static bool _displayReady = false;
 static bool _displayWifiConnected = false;
@@ -15,6 +30,7 @@ static unsigned long _displayMsgUntil = 0;
 static U8G2_SSD1306_128X64_NONAME_F_HW_I2C _u8g2(U8G2_R0, U8X8_PIN_NONE);
 
 inline void _displayFmtMMSS(int sec, char* out, size_t outLen) {
+    // 显示层统一时间格式化入口，避免各页面重复写 mm:ss 转换。
     if (sec < 0) sec = 0;
     int mm = sec / 60;
     int ss = sec % 60;
@@ -35,6 +51,7 @@ void display_setTimerStatus(int remainSec, int totalSec, int timerState) {
 
 void display_init() {
 #if ENABLE_OLED
+    // 启用时初始化 I2C 与 U8g2；禁用时仅输出日志并保留空实现。
     Wire.begin(OLED_SDA_PIN, OLED_SCL_PIN);
     _u8g2.begin();
     _u8g2.setContrast(180);
@@ -68,6 +85,7 @@ void display_update(int mode, const char* postureType, bool isAbnormal) {
     _u8g2.drawStr(0, 10, line);
 
     if (mode == MODE_POSTURE) {
+        // 姿态页：展示姿态类型 + 是否异常，供用户快速感知当前识别结果。
         _u8g2.setFont(u8g2_font_6x13_tf);
         if (postureType == NULL || postureType[0] == '\0') {
             _u8g2.drawStr(0, 34, "Posture: unknown");
@@ -77,6 +95,7 @@ void display_update(int mode, const char* postureType, bool isAbnormal) {
         }
         _u8g2.drawStr(0, 54, isAbnormal ? "State: abnormal" : "State: normal");
     } else if (mode == MODE_CLOCK) {
+        // 时钟页：优先显示本地时间；SNTP 未同步完成时显示提示文案。
         struct tm t;
         if (getLocalTime(&t, 10)) {
             char hhmmss[16];
@@ -110,6 +129,7 @@ void display_update(int mode, const char* postureType, bool isAbnormal) {
 
     _u8g2.sendBuffer();
 #else
+    // OLED 关闭时显式吞掉参数，避免未使用告警并保持调用侧接口一致。
     (void)mode;
     (void)postureType;
     (void)isAbnormal;
@@ -146,6 +166,7 @@ void display_showMessage(const char* line1, const char* line2) {
         _displayMsg2[sizeof(_displayMsg2) - 1] = '\0';
     }
 
+    // 统一 2 秒提示窗；窗口期内 display_update() 会优先渲染该消息。
     _displayMsgUntil = millis() + 2000;
 #else
     (void)line1;

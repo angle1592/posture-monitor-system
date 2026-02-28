@@ -89,6 +89,14 @@ class SittingPostureMonitor:
         4. 通过UART与ESP32通信，发送检测结果
         5. 连续监测并统计异常坐姿
 
+    关键属性含义：
+        - camera: 摄像头模块实例，负责图像采集
+        - detector: 姿态检测器实例，负责关键点推理与姿态判定
+        - uart: 与 ESP32 通信的串口对象
+        - frame_count: 已处理帧总数
+        - recog_latency_ms: 推理时延滑动窗口
+        - abnormal_delay_ms: 从异常出现到触发阈值的时延窗口
+
     使用示例：
         >>> monitor = SittingPostureMonitor()
         >>> if monitor.initialize():
@@ -136,26 +144,68 @@ class SittingPostureMonitor:
         self.logger = get_logger("main", self.config.get("debug", False))
 
     def _now_ms(self):
+        """
+        获取当前毫秒时间戳。
+
+        为什么这样做：
+        - 在 CanMV/MicroPython 优先使用 `ticks_ms`，无该接口时回退到 `time.time`。
+
+        返回：
+        - 当前时间（毫秒，int）。
+        """
         if hasattr(time, "ticks_ms"):
             return int(time.ticks_ms())
         return int(time.time() * 1000)
 
     def _diff_ms(self, end_ms, start_ms):
+        """
+        计算两个毫秒时间戳差值。
+
+        为什么这样做：
+        - `ticks_diff` 能处理计数器回绕，避免长时间运行后出现负值误差。
+
+        返回：
+        - 时间差（毫秒，int）。
+        """
         if hasattr(time, "ticks_diff"):
             return int(time.ticks_diff(end_ms, start_ms))
         return int(end_ms - start_ms)
 
     def _push_window(self, buffer, value):
+        """
+        向滑动窗口追加样本并维持固定长度。
+
+        为什么这样做：
+        - 性能指标只关注最近窗口，避免历史长尾数据稀释当前状态。
+
+        返回：
+        - 无返回值。
+        """
         buffer.append(value)
         if len(buffer) > self.metrics_window_size:
             buffer.pop(0)
 
     def _window_avg(self, buffer):
+        """
+        计算窗口均值。
+
+        返回：
+        - 缓冲区为空时返回 `0.0`，否则返回平均值。
+        """
         if not buffer:
             return 0.0
         return float(sum(buffer)) / float(len(buffer))
 
     def _window_p95(self, buffer):
+        """
+        计算窗口内 P95 延迟。
+
+        为什么这样做：
+        - P95 能反映偶发卡顿，比均值更适合评估实时性体验。
+
+        返回：
+        - 缓冲区为空时返回 `0.0`，否则返回 P95 值。
+        """
         if not buffer:
             return 0.0
         data = sorted(buffer)
@@ -163,6 +213,15 @@ class SittingPostureMonitor:
         return float(data[idx])
 
     def _resolve_fpioa_func(self, fpioa_obj, *names):
+        """
+        在 FPIOA 对象与其类型上查找可用 UART 功能常量。
+
+        为什么这样做：
+        - 不同固件版本常量挂载位置可能不同，需要做兼容查找。
+
+        返回：
+        - 找到时返回常量值，找不到返回 `None`。
+        """
         for name in names:
             value = getattr(fpioa_obj, name, None)
             if value is not None:
@@ -173,6 +232,16 @@ class SittingPostureMonitor:
         return None
 
     def _configure_uart_fpioa(self, uart_id):
+        """
+        配置 UART 引脚到 FPIOA 功能映射。
+
+        为什么这样做：
+        - K230 UART 是否能正常通信取决于引脚复用映射是否正确。
+
+        返回：
+        - `(True, "ok")` 表示映射成功。
+        - `(False, 错误原因)` 表示映射失败（调用方可选择降级继续运行）。
+        """
         fpioa_cls = getattr(machine, "FPIOA", None)
         if fpioa_cls is None:
             return False, "machine.FPIOA unavailable"
@@ -250,6 +319,15 @@ class SittingPostureMonitor:
             return None
 
     def _emit_metrics(self):
+        """
+        输出当前性能指标快照。
+
+        为什么这样做：
+        - 统一在主循环中定期打印 KPI，便于调参与验收时核对时延目标。
+
+        返回：
+        - 无返回值。
+        """
         avg_ms = self._window_avg(self.recog_latency_ms)
         p95_ms = self._window_p95(self.recog_latency_ms)
         frame_ok = avg_ms <= 100.0
@@ -480,11 +558,14 @@ class SittingPostureMonitor:
         JSON格式示例：
             {
                 "frame_id": 123,
-                "posture_type": "normal",
-                "is_abnormal": false,
-                "consecutive_abnormal": 0,
-                "confidence": 0.95,
-                "timestamp": 1698765432
+                "posture_type": "bad",             # 粗粒度状态：normal/no_person/bad
+                "posture_type_fine": "head_down",  # 细粒度状态：head_down/hunchback/tilt/unknown
+                "is_abnormal": true,                # 是否异常姿态
+                "consecutive_abnormal": 6,          # 连续异常帧数
+                "confidence": 0.95,                 # 人体检测置信度
+                "person_debug": {},                 # 人体存在过滤中间量
+                "posture_debug": {},                # 姿态角度/风险中间量
+                "timestamp": 1698765432             # 发送时刻毫秒时间戳
             }
         """
         if self.uart is None:
@@ -493,6 +574,15 @@ class SittingPostureMonitor:
         try:
             import json
 
+            # UART/IDE JSON 字段说明：
+            # - frame_id: 当前处理帧号
+            # - posture_type: 粗粒度类别（normal/no_person/bad）
+            # - posture_type_fine: 细粒度类别（head_down/hunchback/tilt/unknown）
+            # - is_abnormal: 是否异常姿态（布尔）
+            # - consecutive_abnormal: 连续异常帧计数
+            # - confidence: 本帧人体检测置信度
+            # - person_debug/posture_debug: 过滤与姿态判定中间量，便于答辩展示数据流
+            # - timestamp: 发送时刻毫秒时间戳
             output = {
                 "frame_id": data.get("frame_id", 0),
                 "posture_type": data.get("posture_type", "unknown"),
@@ -515,6 +605,15 @@ class SittingPostureMonitor:
             return False
 
     def output_to_ide(self, data):
+        """
+        将结果输出到 CanMV IDE 串口。
+
+        为什么这样做：
+        - 当未启用 ESP32 UART 时，IDE 串口是最直接的调试观察通道。
+
+        返回：
+        - 无返回值。
+        """
         try:
             if not self.runtime_verbose_logs:
                 print(data.get("posture_type", "unknown"))

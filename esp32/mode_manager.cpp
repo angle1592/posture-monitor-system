@@ -1,5 +1,21 @@
 #include "mode_manager.h"
 
+/**
+ * @brief mode_manager.cpp 实现说明
+ *
+ * 实现要点：
+ * - EC11 旋转检测在中断中仅做最小计数，主循环再统一消费，降低 ISR 负担。
+ * - 方向判定基于 CLK 下降沿 + DT 电平关系，配合消抖减少误计数。
+ * - 按键采用“原始态 -> 稳定态”两级状态机，在释放沿判定短按/长按。
+ * - 模式切换采用环形取模，保证在 0..MODE_COUNT-1 内循环。
+ *
+ * 内部状态变量含义：
+ * - _currentMode/_modeChanged：当前模式与本轮是否切换。
+ * - _rotationLocked/_pendingDelta：旋转是否锁定及锁定期间累计调节量。
+ * - _pendingClick：待消费按键事件。
+ * - _ec11RawDelta：ISR 累计的原始旋转脉冲增量。
+ */
+
 // Static variables
 static SystemMode _currentMode = MODE_POSTURE;
 static bool _modeChanged = false;
@@ -19,6 +35,7 @@ static void IRAM_ATTR _ec11ISR() {
     int clkState = digitalRead(EC11_S1_PIN);
     if (clkState != _ec11LastClk && clkState == LOW) {
         // 仅在 CLK 下降沿判向，降低抖动下的重复计数概率。
+        // 方向规则：比较 DT 与 CLK 当前态，不同方向对应 +1/-1。
         if (digitalRead(EC11_S2_PIN) != clkState) {
             _ec11RawDelta++;
         } else {
@@ -37,6 +54,7 @@ void mode_init() {
     _pendingClick = MODE_CLICK_NONE;
 
 #if ENABLE_EC11
+    // 启用上拉，匹配大多数 EC11 模块开漏/机械触点输出特性。
     pinMode(EC11_S1_PIN, INPUT_PULLUP);
     pinMode(EC11_S2_PIN, INPUT_PULLUP);
     pinMode(EC11_KEY_PIN, INPUT_PULLUP);
@@ -48,9 +66,11 @@ void mode_init() {
     _btnLastChangeMs = millis();
     _btnPressStartMs = 0;
 
+    // 仅挂 CLK 引脚中断，DT 作为方向辅助采样信号。
     attachInterrupt(digitalPinToInterrupt(EC11_S1_PIN), _ec11ISR, CHANGE);
     LOGI("EC11 初始化完成");
 #else
+    // 禁用 EC11 时仍保留模式管理能力（可由软件接口切换）。
     LOGI("EC11 未启用（ENABLE_EC11=0）");
 #endif
 }
@@ -59,6 +79,7 @@ void mode_update() {
     _modeChanged = false;
 
 #if ENABLE_EC11
+    // 将 ISR 累积量原子取走，避免主循环与中断并发读写冲突。
     noInterrupts();
     int delta = _ec11RawDelta;
     _ec11RawDelta = 0;
@@ -69,6 +90,7 @@ void mode_update() {
             // 锁定时不改模式，把旋转量缓存给上层做参数调节（如定时时长）。
             _pendingDelta += delta;
         } else {
+            // 未锁定时直接进行模式轮转：顺时针 +1，逆时针 -1（并做环形回绕）。
             int nextMode = (int)_currentMode;
             if (delta > 0) {
                 nextMode = (nextMode + 1) % MODE_COUNT;
@@ -87,6 +109,7 @@ void mode_update() {
     unsigned long now = millis();
     bool rawPressed = digitalRead(EC11_KEY_PIN) == LOW;
     if (rawPressed != _btnRawPressed) {
+        // 原始电平变化只更新时间戳，不立即触发事件，先等待消抖窗口。
         _btnRawPressed = rawPressed;
         _btnLastChangeMs = now;
     }
@@ -95,6 +118,7 @@ void mode_update() {
         if (_btnStablePressed != _btnRawPressed) {
             _btnStablePressed = _btnRawPressed;
             if (_btnStablePressed) {
+                // 稳定按下：记录按下起点，时长在释放时结算。
                 _btnPressStartMs = now;
             } else {
                 // 在按键释放时判短按/长按，避免按下瞬间误触发动作。
@@ -142,6 +166,7 @@ const char* mode_getName() {
 void mode_setRotationLocked(bool locked) {
     _rotationLocked = locked;
     if (!locked) {
+        // 解锁时清空历史增量，避免旧输入影响后续业务参数。
         _pendingDelta = 0;
     }
 }

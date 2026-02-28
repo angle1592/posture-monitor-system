@@ -13,6 +13,28 @@
 #ifndef UTILS_H
 #define UTILS_H
 
+/**
+ * @brief 工具与日志模块（公共基础模块）
+ *
+ * 模块职责：
+ * - 提供统一日志宏（按 LOG_LEVEL 控制输出等级）。
+ * - 提供串口初始化、横幅打印、WiFi/MQTT 状态解释等通用工具。
+ *
+ * 对外核心 API：
+ * - initSerial()
+ * - printWiFiStatusExplanation()
+ * - printBanner()
+ * - mqttStateToString()
+ *
+ * 依赖关系：
+ * - Arduino Serial / millis
+ * - WiFi 状态码定义（WiFi.h）
+ * - 项目配置（config.h）
+ *
+ * 是否可选：
+ * - 非可选模块，属于其它模块的基础依赖。
+ */
+
 #include <Arduino.h>
 #include <WiFi.h>
 #include "config.h"
@@ -105,21 +127,29 @@ enum LogLevel {
 
 /**
  * @brief 初始化调试串口
+ *
+ * 在系统启动早期调用，确保后续模块日志可见。
  */
 void initSerial();
 
 /**
  * @brief 打印 WiFi 状态代码的人类可读解释
+ *
+ * 用于连接失败时快速定位问题（SSID、密码、频段、覆盖等）。
  */
 void printWiFiStatusExplanation(int status);
 
 /**
  * @brief 打印格式化的横幅
+ *
+ * 用于串口日志分段，提升调试可读性。
  */
 void printBanner(const char* title, int width = 60);
 
 /**
  * @brief 将 PubSubClient MQTT 状态代码转换为可读字符串
+ *
+ * 便于在连接失败日志中直接输出原因文本。
  */
 const char* mqttStateToString(int state);
 

@@ -145,7 +145,14 @@ import SectionHeader from '@/components/ui/SectionHeader.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
 import StatCard from '@/components/ui/StatCard.vue'
 
-// 日志记录
+/*
+ * 页面职责：实时监控页。
+ * - 展示当前姿势、设备在线状态、评分与系统日志。
+ * - 通过 watch 监听全局状态变化并记录事件日志。
+ * - 页面可见期间切换为高频轮询，离开时恢复常规轮询。
+ */
+
+// 日志记录结构：用于终端风格滚动日志展示。
 interface LogEntry {
   time: string
   message: string
@@ -154,6 +161,7 @@ interface LogEntry {
 
 const logs = ref<LogEntry[]>([])
 
+// 姿势状态胶囊样式映射：在线且姿势正常/异常/离线三态。
 const getPostureStatusClass = computed(() => {
   if (!store.state.isOnline) return 'offline'
   return store.state.isPosture ? 'normal' : 'danger'
@@ -190,7 +198,7 @@ function clearLogs() {
   addLog('日志已清空', 'info')
 }
 
-// 监听姿势变化
+// 监听姿势变化：只记录边沿变化，避免相同状态重复刷日志。
 watch(
   () => store.state.isPosture,
   (newVal, oldVal) => {
@@ -204,7 +212,7 @@ watch(
   }
 )
 
-// 监听设备在线状态变化
+// 监听在线状态变化：用于记录上线/离线事件。
 watch(
   () => store.state.isOnline,
   (newVal, oldVal) => {

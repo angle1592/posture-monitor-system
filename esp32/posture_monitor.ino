@@ -100,6 +100,10 @@ void blinkLED(int times = 1, int duration = 100);
 // setup() — 系统初始化
 // =============================================================================
 
+/**
+ * @brief 初始化系统各模块并建立首轮云连接。
+ * @details 按“底层通信 -> 外设 -> 网络 -> 云端”的顺序启动，目的是先确保依赖项可用再暴露上层能力。
+ */
 void setup() {
     // 1. 初始化调试串口
     initSerial();
@@ -131,6 +135,7 @@ void setup() {
     display_init();
     voice_init();
     alerts_init();
+    // 启动阶段先把默认配置同步到提醒模块，确保后续行为与 config.h 一致。
     timer_applyConfig();
     timer_init();
     
@@ -169,6 +174,10 @@ void setup() {
 // loop() — 主循环
 // =============================================================================
 
+/**
+ * @brief 主循环：以非阻塞方式轮询通信、状态机与显示刷新。
+ * @details 所有周期任务共用 millis() 时基，避免单点阻塞导致整机卡顿。
+ */
 void loop() {
     unsigned long now = millis();
     
@@ -217,6 +226,7 @@ void loop() {
         const K230Data* data = k230_getData();
         display_setConnectivity(WiFi.status() == WL_CONNECTED, mqttOk);
         
+        // 读取定时器状态并映射到显示层状态机，确保界面与逻辑状态一致。
         TimerState tState = timer_getState();
         int tRemain = (int)timer_getRemainSec();
         int tDuration = (int)timer_getConfig()->timerDurationSec;
@@ -237,6 +247,14 @@ void loop() {
     delay(LOOP_YIELD_DELAY_MS);
 }
 
+/**
+ * @brief 在标准 OneNET 属性结构中定位某 key 对应的 value 起始位置。
+ * @details 先找 key 再找 "value"，是为了兼容 params 内嵌对象格式，降低误匹配概率。
+ * @param message 输入 JSON 字符串
+ * @param key 目标属性名（含引号）
+ * @param valueStart 输出参数，返回 value 起始指针
+ * @return true 表示定位成功
+ */
 bool jsonFindValueStart(const char* message, const char* key, const char** valueStart) {
     if (message == NULL || key == NULL || valueStart == NULL) {
         return false;
@@ -261,6 +279,14 @@ bool jsonFindValueStart(const char* message, const char* key, const char** value
     return true;
 }
 
+/**
+ * @brief 在兼容格式下定位参数值起始位置。
+ * @details 先走标准 value 结构；若失败再回退到 key:xxx 直取，保证新旧协议都能解析。
+ * @param message 输入 JSON 字符串
+ * @param key 目标属性名（含引号）
+ * @param valueStart 输出参数，返回 value 起始指针
+ * @return true 表示定位成功
+ */
 bool jsonFindParamValueStart(const char* message, const char* key, const char** valueStart) {
     if (message == NULL || key == NULL || valueStart == NULL) {
         return false;
@@ -289,6 +315,13 @@ bool jsonFindParamValueStart(const char* message, const char* key, const char** 
     return true;
 }
 
+/**
+ * @brief 解析 JSON 文本中的布尔值。
+ * @details 只接受 true/false 文本，避免把非预期字符串静默当作有效值。
+ * @param p 待解析文本起始指针
+ * @param outValue 输出布尔值
+ * @return true 表示解析成功
+ */
 bool jsonParseBool(const char* p, bool* outValue) {
     if (p == NULL || outValue == NULL) {
         return false;
@@ -304,6 +337,13 @@ bool jsonParseBool(const char* p, bool* outValue) {
     return false;
 }
 
+/**
+ * @brief 解析无符号整数参数。
+ * @details 使用 strtoul 支持连续数字解析，并用 endPtr 判断是否真的读到了数字。
+ * @param p 待解析文本起始指针
+ * @param outValue 输出数值
+ * @return true 表示解析成功
+ */
 bool jsonParseULong(const char* p, unsigned long* outValue) {
     if (p == NULL || outValue == NULL) {
         return false;
@@ -319,6 +359,10 @@ bool jsonParseULong(const char* p, unsigned long* outValue) {
 
 
 
+/**
+ * @brief 执行执行器自检（LED/蜂鸣器/语音）。
+ * @details 临时强制开启所有提醒通道，验证硬件链路后再恢复原配置，避免污染运行态。
+ */
 void runActuatorSelfTest() {
     LOGI("[SELFTEST] 执行语音/灯光/蜂鸣器自检");
 
@@ -345,6 +389,10 @@ void runActuatorSelfTest() {
     alerts_setAlertMode(oldMask);
 }
 
+/**
+ * @brief 非阻塞读取串口测试命令并按行分发。
+ * @details 采用缓冲区累积到换行再执行，避免半包命令导致误触发。
+ */
 void handleSerialTestInput() {
     while (Serial.available() > 0) {
         int b = Serial.read();
@@ -372,6 +420,11 @@ void handleSerialTestInput() {
     }
 }
 
+/**
+ * @brief 处理调试串口测试命令。
+ * @details 该函数是人工联调入口，覆盖注入姿态、外设自检、GPIO 观察等诊断能力。
+ * @param line 一整行命令文本（以换行分隔）
+ */
 void processSerialTestCommand(const char* line) {
     if (line == NULL || line[0] == '\0') {
         return;
@@ -480,10 +533,8 @@ void processSerialTestCommand(const char* line) {
         if (alerts_voiceEnabled()) {
             voice_speak("请调整坐姿");
         }
-        // We can't directly set alertCooldownUntilMs, but we can call timer_alertPolicyTick with forced abnormal to trigger it.
-        // Or we can just let it be since it's a test command. Actually, we can just let it trigger the buzzer/voice.
-        // The original code set alertCooldownUntilMs and alertPolicyState.
-        // Since it's a test command, we can just trigger the alert.
+        // 这里不直接改提醒策略内部状态，只做一次“立即输出”用于人工验证。
+        // 这样可以避免测试命令污染正常运行中的冷却时序。
         LOGI("[TEST] 手动触发一次提醒");
         return;
     }
@@ -803,7 +854,12 @@ void processSerialTestCommand(const char* line) {
     LOGW("[TEST] 未知命令: %s", line);
 }
 
+/**
+ * @brief 根据 EC11 按键事件处理模式相关动作。
+ * @details 同一个按键在不同模式有不同语义，因此先判模式再判短按/长按，避免误操作。
+ */
 void handleModeAndTimerInput() {
+    // 事件是一次性消费模型：本轮不处理就会丢失，因此先取事件再判断模式。
     ModeClickEvent click = mode_takeClickEvent();
     if (click == MODE_CLICK_NONE) {
         return;
@@ -813,6 +869,7 @@ void handleModeAndTimerInput() {
          click == MODE_CLICK_LONG ? "long" : "short",
          mode_getName());
 
+    // 模式0（坐姿模式）：短按切检测开关，长按轮换提醒输出组合。
     if (mode_getCurrent() == MODE_POSTURE) {
         if (click == MODE_CLICK_SHORT) {
             monitoringEnabled = !monitoringEnabled;
@@ -820,6 +877,8 @@ void handleModeAndTimerInput() {
             display_showMessage(monitoringEnabled ? "Monitor ON" : "Monitor OFF", NULL);
             LOGI("[EC11] monitor=%s", monitoringEnabled ? "ON" : "OFF");
         } else if (click == MODE_CLICK_LONG) {
+            // 轮换顺序：LED -> LED+蜂鸣器 -> LED+蜂鸣器+语音 -> LED。
+            // 这样设计是让用户从“最轻提醒”逐步增强，避免一上来就语音打扰。
             uint8_t modeMask = timer_getConfig()->alertModeMask;
             if (modeMask == ALERT_MODE_LED) {
                 modeMask = ALERT_MODE_LED | ALERT_MODE_BUZZER;
@@ -835,6 +894,9 @@ void handleModeAndTimerInput() {
         return;
     }
 
+    // 模式2（定时器模式）：
+    // - 长按：进入/退出调时模式（旋钮改时长）；
+    // - 短按：在 开始/暂停/恢复 之间切换。
     if (mode_getCurrent() == MODE_TIMER) {
         if (click == MODE_CLICK_LONG) {
             bool newAdjustMode = !timer_isAdjustMode();
@@ -862,6 +924,10 @@ void handleModeAndTimerInput() {
     }
 }
 
+/**
+ * @brief 在测试命令执行期间主动刷新显示。
+ * @details 测试流程里存在短时阻塞，手动刷新可让操作者即时看到引脚/状态变化。
+ */
 void refreshDisplayForTest() {
     const K230Data* data = k230_getData();
     const char* posture = (data != NULL) ? data->postureType : NULL;
@@ -875,12 +941,11 @@ void refreshDisplayForTest() {
 // =============================================================================
 
 /**
- * @brief MQTT 消息回调
- * 
- * 处理从 OneNET 收到的所有消息。
- * 根据主题分发到对应的处理函数。
- * 
- * 注意：需要排除 set_reply / get_reply，因为它们的主题也包含 "property/set" 或 "property/get"。
+ * @brief MQTT 消息统一入口，根据主题路由到对应处理函数。
+ * @details 先做 topic 级分流再解析 payload，可减少无关消息的解析开销，并避免回执主题被误当命令。
+ * @param topic MQTT 主题字符串
+ * @param payload MQTT 原始载荷字节流
+ * @param length 载荷长度
  */
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
     LOGI("[MQTT 收到消息]");
@@ -893,14 +958,15 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     message[copyLen] = '\0';
     LOGI("  内容: %s", message);
     
-    // 分发到对应处理函数
-    // reply 主题也会命中 property/set|get 关键字，先排除可避免误处理。
+    // 分发顺序说明：
+    // 1) 先排除 *_reply，避免回执被当成下行命令造成“设备自己处理自己的回包”；
+    // 2) 再匹配 set/get，下发控制与查询走不同处理路径。
     if (strstr(topic, "property/set") != NULL && strstr(topic, "set_reply") == NULL) {
-        // 云端属性设置命令
+        // 云端属性设置命令：会改本地状态并回 set_reply。
         LOGI("  → 处理 property/set 命令");
         handlePropertySet(message);
     } else if (strstr(topic, "property/get") != NULL && strstr(topic, "get_reply") == NULL) {
-        // 云端属性查询请求
+        // 云端属性查询请求：只读取当前状态并回 get_reply。
         LOGI("  → 处理 property/get 请求");
         handlePropertyGet(message);
     }
@@ -926,6 +992,11 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
  */
 void handlePropertySet(const char* message) {
     LOGI("[handlePropertySet] 开始解析命令...");
+
+    // 解析流程总览：
+    // - 先拿到消息 id（用于回复同一事务）；
+    // - 再按属性逐项尝试解析（允许一次下发多个字段）；
+    // - 最后统一 applyConfig + set_reply，确保行为与回执一致。
     
     // 步骤 1：提取消息 id
     char msgId[32] = "0";
@@ -937,6 +1008,7 @@ void handlePropertySet(const char* message) {
     unsigned long numValue = 0;
     bool hasMonitoringCommand = false;
 
+    // 优先解析新字段 monitoringEnabled；若存在则标记 hasMonitoringCommand。
     if (jsonFindParamValueStart(message, PROP_ID_MONITORING_ENABLED, &p) && jsonParseBool(p, &boolValue)) {
         bool oldValue = monitoringEnabled;
         monitoringEnabled = boolValue;
@@ -947,6 +1019,8 @@ void handlePropertySet(const char* message) {
         LOGI("  %s: %s", PROP_ID_MONITORING_ENABLED, monitoringEnabled ? "true" : "false");
     }
 
+    // 兼容旧字段 isPosture：仅在未收到 monitoringEnabled 时生效，
+    // 这样可避免同一报文同时带新旧字段时互相覆盖。
     if (!hasMonitoringCommand && jsonFindParamValueStart(message, PROP_ID_IS_POSTURE, &p) && jsonParseBool(p, &boolValue)) {
         bool oldValue = monitoringEnabled;
         monitoringEnabled = boolValue;
@@ -956,6 +1030,8 @@ void handlePropertySet(const char* message) {
         LOGI("  %s(legacy): %s", PROP_ID_IS_POSTURE, monitoringEnabled ? "true" : "false");
     }
 
+    // 模式切换需要先做越界保护；切离定时器模式时要同步退出“调时锁定”，
+    // 否则旋钮可能仍被锁在旧语义下。
     if (jsonFindParamValueStart(message, PROP_ID_CURRENT_MODE, &p) && jsonParseULong(p, &numValue)) {
         if (numValue < MODE_COUNT) {
             if (mode_setCurrent((SystemMode)numValue)) {
@@ -970,31 +1046,37 @@ void handlePropertySet(const char* message) {
         }
     }
 
+    // 提醒输出策略：LED/蜂鸣器/语音位掩码。
     if (jsonFindParamValueStart(message, PROP_ID_ALERT_MODE_MASK, &p) && jsonParseULong(p, &numValue)) {
         timer_setAlertModeMask((uint8_t)numValue);
         LOGI("  %s: %u", PROP_ID_ALERT_MODE_MASK, timer_getConfig()->alertModeMask);
     }
 
+    // 冷却参数直接影响重复提醒频率，是行为策略核心参数。
     if (jsonFindParamValueStart(message, PROP_ID_COOLDOWN_MS, &p) && jsonParseULong(p, &numValue)) {
         timer_setCooldownMs(numValue);
         LOGI("  %s: %lu", PROP_ID_COOLDOWN_MS, timer_getConfig()->cooldownMs);
     }
 
+    // 兼容历史字段 remindIntervalMs，并映射到当前 cooldownMs。
     if (jsonFindParamValueStart(message, "\"remindIntervalMs\"", &p) && jsonParseULong(p, &numValue)) {
         timer_setCooldownMs(numValue);
         LOGI("  remindIntervalMs(legacy->cooldownMs): %lu", timer_getConfig()->cooldownMs);
     }
 
+    // 定时器时长配置：内部会做上下限钳制，避免异常值。
     if (jsonFindParamValueStart(message, PROP_ID_TIMER_DURATION_SEC, &p) && jsonParseULong(p, &numValue)) {
         timer_setTimerDurationSec(numValue);
         LOGI("  %s: %lu", PROP_ID_TIMER_DURATION_SEC, timer_getConfig()->timerDurationSec);
     }
 
+    // 运行态控制：true 表示开始/继续，false 表示暂停。
     if (jsonFindParamValueStart(message, PROP_ID_TIMER_RUNNING, &p) && jsonParseBool(p, &boolValue)) {
         timer_setTimerRunning(boolValue);
         LOGI("  %s: %s", PROP_ID_TIMER_RUNNING, boolValue ? "true" : "false");
     }
 
+    // 自检触发字段只看“出现与否”，数值本身用于日志追踪来源。
     if (jsonFindParamValueStart(message, PROP_ID_SELF_TEST, &p) && jsonParseULong(p, &numValue)) {
         runActuatorSelfTest();
         LOGI("  %s: %lu", PROP_ID_SELF_TEST, numValue);
@@ -1023,6 +1105,11 @@ void handlePropertySet(const char* message) {
  */
 void handlePropertyGet(const char* message) {
     LOGI("[handlePropertyGet] 开始处理查询...");
+
+    // 数据回报思路：
+    // - 返回当前“行为状态”（是否正常、当前模式、定时器运行态）；
+    // - 同时返回“策略配置”（提醒掩码、冷却、时长、配置版本）。
+    // 云端据此既能展示实时状态，也能判断配置是否已下发成功。
     
     // 步骤 1：提取消息 id
     char msgId[32] = "0";
@@ -1031,6 +1118,7 @@ void handlePropertyGet(const char* message) {
     
     // 步骤 2：构建当前属性值
     const K230Data* data = k230_getData();
+    // 这里上报的是“当前实时判断值”，不是周期上报里的容错决策值。
     bool isPostureOk = monitoringEnabled && data->valid && !data->isAbnormal;
 
     char params[512];
@@ -1068,39 +1156,60 @@ void handlePropertyGet(const char* message) {
 // 定时属性上报
 // =============================================================================
 
+/**
+ * @brief 评估本轮周期上报应使用的坐姿结果及原因。
+ * @details 把上报判定集中到单函数，保证日志、云端数据、异常兜底三者一致。
+ * @param data 当前 K230 数据
+ * @param now 当前毫秒时间戳
+ * @return PublishDecision 包含最终布尔值、决策原因与数据时效信息
+ */
 PublishDecision evaluatePeriodicPublishDecision(const K230Data* data, unsigned long now) {
     PublishDecision decision = {true, DECISION_FALLBACK_TRUE, 0};
 
+    // 分支顺序有意设计为“先总开关，再启动态，再链路健康，再实时帧”：
+    // 越靠前的是越高优先级的全局约束。
+
+    // 1) 检测功能被关闭：按产品策略上报 true，避免在停用期间制造异常告警。
     if (!monitoringEnabled) {
         decision.reason = DECISION_MONITOR_OFF;
         return decision;
     }
 
+    // 2) 系统刚启动且还没拿到首帧：进入等待态，不立刻依据空数据判断异常。
     if (k230_getFrameCount() == 0) {
         decision.reason = DECISION_STARTUP_WAIT;
         return decision;
     }
 
+    // 3) 当前帧无效或链路超时：先尝试“保鲜窗口”策略。
     if (!data->valid || k230_isTimeout(K230_TIMEOUT_MS)) {
         if (data->valid) {
             decision.dataAgeMs = now - data->lastUpdateTime;
-            // 短窗口保留最后一次有效姿态，避免链路抖动导致状态频繁翻转。
+            // 3.1) 在保鲜窗口内，沿用最近一次有效姿态，减少短抖动导致的云端翻转。
             if (decision.dataAgeMs <= K230_STALE_HOLD_MS) {
                 decision.reason = DECISION_STALE_HOLD;
                 decision.isPostureOk = !data->isAbnormal;
                 return decision;
             }
         }
+        // 3.2) 超出保鲜窗口或无可用历史帧：回退到安全默认 true。
         decision.reason = DECISION_FALLBACK_TRUE;
         decision.isPostureOk = true;
         return decision;
     }
 
+    // 4) 链路与数据都健康：使用实时帧判定。
     decision.reason = DECISION_LIVE_FRAME;
     decision.isPostureOk = !data->isAbnormal;
     return decision;
 }
 
+/**
+ * @brief 将上报决策原因枚举转换为日志可读文本。
+ * @details 统一映射可避免各处手写字符串不一致，便于排查现场问题。
+ * @param reason 决策原因枚举
+ * @return const char* 对应文本标签
+ */
 const char* publishDecisionReasonText(PublishDecisionReason reason) {
     switch (reason) {
         case DECISION_MONITOR_OFF:
@@ -1119,13 +1228,8 @@ const char* publishDecisionReasonText(PublishDecisionReason reason) {
 }
 
 /**
- * @brief 定时发布坐姿属性到 OneNET
- * 
- * 每隔 PUBLISH_INTERVAL_MS 上报一次 isPosture 属性。
- * 属性值来源：K230 检测结果 + monitoringEnabled 开关。
- * 
- * isPosture = true  → 坐姿正常（检测开启 + K230 数据有效 + 非异常）
- * isPosture = false → 坐姿异常或检测已关闭
+ * @brief 定时发布设备属性到 OneNET。
+ * @details 先用 evaluatePeriodicPublishDecision 统一得出上报值，再拆分为状态包与配置包发布，降低单包过长失败风险。
  */
 void handlePeriodicPublish() {
     // 检查 MQTT 是否连接
@@ -1138,6 +1242,7 @@ void handlePeriodicPublish() {
     unsigned long now = millis();
     PublishDecision decision = evaluatePeriodicPublishDecision(data, now);
 
+    // 先打印“为何这样上报”的原因，便于现场从日志反推判定链路。
     switch (decision.reason) {
         case DECISION_MONITOR_OFF:
             LOGD("[定时上报][%s] 检测已关闭，上报 isPosture=true", publishDecisionReasonText(decision.reason));
@@ -1173,6 +1278,7 @@ void handlePeriodicPublish() {
     }
     
     // PubSubClient 默认报文上限较小，拆分上报避免单包过长导致 publish() 失败
+    // 第一包：高频状态（姿态、检测开关、当前模式、定时器运行态）。
     char statusParams[192];
     sprintf(
         statusParams,
@@ -1188,6 +1294,7 @@ void handlePeriodicPublish() {
         PROP_ID_TIMER_RUNNING, timer_getState() == TIMER_RUNNING ? "true" : "false"
     );
 
+    // 第二包：低频配置（提醒掩码、冷却、定时时长、配置版本）。
     char configParams[224];
     sprintf(
         configParams,
@@ -1203,6 +1310,7 @@ void handlePeriodicPublish() {
         PROP_ID_CFG_VERSION, timer_getConfig()->cfgVersion
     );
 
+    // 分包发布比单大包更稳，且云端可分别追踪状态变化与配置变化。
     mqtt_publishProperty(statusParams);
     mqtt_publishProperty(configParams);
 }

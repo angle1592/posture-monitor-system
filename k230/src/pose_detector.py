@@ -1,3 +1,17 @@
+"""
+坐姿检测核心算法模块。
+
+模块职责：
+- 负责 YOLOv8n-pose 模型加载、预处理、推理与后处理。
+- 从关键点中提取几何特征并判定姿态类型（normal/head_down/hunchback/tilt）。
+- 输出姿态风险中间量，供主程序打包为 UART JSON 发送给 ESP32。
+
+与其他模块的关系：
+- `main.py` 调用 `detect_pose` 获取姿态结果并进行异常计数。
+- `config.py` 提供检测阈值、人体过滤参数与姿态判定参数。
+- `logger.py` 提供调试日志输出能力。
+"""
+
 import math
 import sys
 
@@ -10,6 +24,15 @@ from canmv_api import path_exists
 
 
 def _hwc_to_chw(arr):
+    """
+    将图像张量从 HWC 排列转换为 CHW 排列。
+
+    为什么这样做：
+    - KPU/AI2D 输入通常为 CHW，本函数用于统一输入格式。
+
+    返回：
+    - 转换后的 CHW 数组。
+    """
     shape = arr.shape
     flat = arr.reshape((shape[0] * shape[1], shape[2]))
     transposed = flat.transpose()
@@ -18,6 +41,15 @@ def _hwc_to_chw(arr):
 
 
 def _center_pad_param(input_size, output_size):
+    """
+    计算按比例缩放后的中心填充参数。
+
+    为什么这样做：
+    - 保持宽高比缩放可减少关键点几何失真，居中填充便于后处理对齐。
+
+    返回：
+    - `(top, bottom, left, right)` 填充像素值。
+    """
     ratio_w = output_size[0] / input_size[0]
     ratio_h = output_size[1] / input_size[1]
     ratio = min(ratio_w, ratio_h)
@@ -33,6 +65,21 @@ def _center_pad_param(input_size, output_size):
 
 
 class PoseDetector:
+    """
+    YOLOv8n-pose 姿态检测器。
+
+    类职责：
+    - 管理模型与 AI2D 资源生命周期。
+    - 执行人体检测、关键点提取与姿态分类。
+
+    关键属性含义：
+    - `kpu`：模型推理对象。
+    - `ai2d_builder`：预处理图构建器，随输入尺寸变化重建。
+    - `posture_state`：迟滞状态机（normal/abnormal）。
+    - `class_ema`：各姿态类别平滑分值，用于降低抖动。
+    - `last_person_debug`：最近一次人体存在过滤结果。
+    """
+
     KEYPOINT_INDICES = {
         "nose": 0,
         "left_shoulder": 5,
@@ -42,6 +89,15 @@ class PoseDetector:
     }
 
     def __init__(self, model_path=None, debug=False):
+        """
+        初始化姿态检测器参数与状态。
+
+        为什么这样做：
+        - 在构造阶段完成阈值读取和状态变量初始化，推理阶段可直接使用。
+
+        返回：
+        - 无返回值。
+        """
         cfg_path = MODEL_CONFIG.get(
             "model_path", "/sdcard/examples/kmodel/yolov8n-pose.kmodel"
         )
@@ -129,14 +185,31 @@ class PoseDetector:
         self.last_person_debug = {}
 
     def _log(self, message):
+        """输出调试日志，返回无。"""
         self.logger.debug(message)
 
     def reset_posture_state(self):
+        """
+        重置姿态状态机与平滑分值。
+
+        为什么这样做：
+        - 连续无人后重新入镜时，避免沿用旧状态导致误报。
+
+        返回：
+        - 无返回值。
+        """
         self.posture_state = "normal"
         self.posture_risk_ema = 0.0
         self.class_ema = {"head_down": 0.0, "hunchback": 0.0, "tilt": 0.0}
 
     def initialize(self):
+        """
+        加载 kmodel 并初始化 AI2D 预处理资源。
+
+        返回：
+        - `True` 表示可进入推理。
+        - `False` 表示初始化失败。
+        """
         try:
             if not path_exists(self.model_path):
                 print("[-] 模型文件不存在:", self.model_path)
@@ -168,6 +241,12 @@ class PoseDetector:
             return False
 
     def get_runtime_info(self):
+        """
+        获取模型运行时信息，用于启动自检与调试展示。
+
+        返回：
+        - 包含模型路径、输入输出数量与描述的字典。
+        """
         info = {
             "model_path": self.model_path,
             "initialized": self.is_initialized,
@@ -197,6 +276,15 @@ class PoseDetector:
         return info
 
     def _ensure_ai2d_builder(self, in_w, in_h):
+        """
+        按输入尺寸确保 AI2D builder 可用。
+
+        为什么这样做：
+        - 输入尺寸变化时必须重建预处理图，否则推理输入会错位。
+
+        返回：
+        - 无返回值。
+        """
         if self.last_input_shape == (in_w, in_h) and self.ai2d_builder is not None:
             return
         top, bottom, left, right = _center_pad_param(
@@ -215,6 +303,15 @@ class PoseDetector:
         self.last_input_shape = (in_w, in_h)
 
     def preprocess(self, input_np):
+        """
+        预处理输入图像到模型输入张量。
+
+        数据流：
+        - 图像对象/数组 -> CHW 规范化 -> 居中缩放填充 -> AI2D 输出张量。
+
+        返回：
+        - 成功返回模型输入 tensor，失败返回 `None`。
+        """
         try:
             if hasattr(input_np, "to_numpy_ref"):
                 input_np = input_np.to_numpy_ref()
@@ -243,6 +340,15 @@ class PoseDetector:
             return None
 
     def _select_pose_output(self, outputs):
+        """
+        从多输出中选择姿态主输出。
+
+        为什么这样做：
+        - 不同导出模型输出顺序可能不同，需按维度特征自动识别。
+
+        返回：
+        - 匹配的输出数组；无可用输出时返回 `None`。
+        """
         if not outputs:
             return None
         if len(outputs) == 1:
@@ -263,6 +369,12 @@ class PoseDetector:
         return outputs[0]
 
     def _infer(self, input_tensor):
+        """
+        执行一次 KPU 推理并提取输出。
+
+        返回：
+        - 选中的姿态输出数组。
+        """
         self.kpu.set_input_tensor(0, input_tensor)
         self.kpu.run()
         outputs = []
@@ -273,6 +385,15 @@ class PoseDetector:
         return self._select_pose_output(outputs)
 
     def postprocess(self, output_data, conf_threshold=None, nms_threshold=None):
+        """
+        对模型输出做解码、阈值过滤与 NMS 去重。
+
+        为什么这样做：
+        - 将原始输出转换为可解释的人体框+关键点结构，供姿态分析使用。
+
+        返回：
+        - 检测结果列表（按置信度与 NMS 过滤后）。
+        """
         if output_data is None:
             return []
         if conf_threshold is None:
@@ -352,6 +473,12 @@ class PoseDetector:
             return []
 
     def _nms(self, detections, threshold):
+        """
+        执行非极大值抑制。
+
+        返回：
+        - 去除重叠框后的检测列表。
+        """
         if not detections:
             return []
         candidates = sorted(detections, key=lambda x: x["confidence"], reverse=True)
@@ -367,6 +494,12 @@ class PoseDetector:
         return keep
 
     def _calculate_iou(self, box1, box2):
+        """
+        计算两个边界框的 IoU。
+
+        返回：
+        - IoU 数值（0~1）。
+        """
         x1_min, y1_min, x1_max, y1_max = box1
         x2_min, y2_min, x2_max, y2_max = box2
         xi_min = max(x1_min, x2_min)
@@ -384,6 +517,16 @@ class PoseDetector:
         return inter / union
 
     def detect_pose(self, input_np):
+        """
+        对单帧输入执行完整姿态检测流程。
+
+        数据流：
+        - 预处理 -> 推理 -> 后处理 -> 人体存在过滤 -> 姿态判定。
+
+        返回：
+        - 成功时返回包含 `pose_type/confidence/keypoints/angles/person_debug` 的字典。
+        - 失败或无人时返回 `None`。
+        """
         if not self.is_initialized:
             self.last_person_debug = {"reason": "detector_not_initialized"}
             return None
@@ -413,9 +556,9 @@ class PoseDetector:
             raw_w = abs(float(raw_wh[0]))
             raw_h = abs(float(raw_wh[1]))
 
-            # Some exported kmodels output bbox width/height in pixel space
-            # (e.g. around model input size) instead of normalized 0~1.
-            # If clipping collapses bbox to 0 area, use normalized raw_wh fallback.
+            # 部分导出的 kmodel 会把 bbox 宽高输出为像素尺度（接近输入尺寸），
+            # 而不是 0~1 归一化尺度；因此这里先做归一化修正。
+            # 当裁剪后面积退化为 0 时，回退使用 raw_wh 归一化面积，避免误判 small_bbox。
             if raw_w > 1.5:
                 raw_w = raw_w / float(self.input_size[0])
             if raw_h > 1.5:
@@ -468,6 +611,15 @@ class PoseDetector:
             return None
 
     def _analyze_posture_detailed(self, keypoints):
+        """
+        经典路径：基于几何特征与风险融合判定姿态。
+
+        为什么这样做：
+        - 将颈部、躯干、侧倾等异常信号做加权融合，再用 EMA+迟滞降低抖动。
+
+        返回：
+        - `(posture_type, angles_dict)`。
+        """
         if self.posture_mode == "decoupled":
             return self._analyze_posture_decoupled(keypoints)
         if not keypoints or len(keypoints) < 17:
@@ -648,6 +800,15 @@ class PoseDetector:
         }
 
     def _analyze_posture_decoupled(self, keypoints):
+        """
+        解耦路径：分别计算 head_down/hunchback/tilt 分数后再做状态机判定。
+
+        为什么这样做：
+        - 便于解释各类别贡献，适合论文与答辩展示“分类分值如何形成”。
+
+        返回：
+        - `(posture_type, angles_dict)`。
+        """
         if not keypoints or len(keypoints) < 17:
             return "unknown", {"neck": 0.0, "back": 0.0, "shoulder_diff": 0.0}
 
@@ -852,6 +1013,12 @@ class PoseDetector:
         }
 
     def _tilt_from_vertical(self, p1, p2):
+        """
+        计算两点连线相对竖直方向的倾斜角。
+
+        返回：
+        - 倾角（度）。
+        """
         dx = abs(float(p2[0] - p1[0]))
         dy = abs(float(p2[1] - p1[1]))
         if dx == 0.0 and dy == 0.0:
@@ -859,22 +1026,41 @@ class PoseDetector:
         return math.degrees(math.atan2(dx, dy if dy > 1e-6 else 1e-6))
 
     def _distance(self, p1, p2):
+        """计算两点欧氏距离并返回浮点值。"""
         dx = float(p2[0] - p1[0])
         dy = float(p2[1] - p1[1])
         return math.sqrt(dx * dx + dy * dy)
 
     def _kp_conf(self, kp):
+        """
+        提取并裁剪关键点置信度。
+
+        返回：
+        - 0~1 之间的置信度。
+        """
         if len(kp) >= 3:
             return max(0.0, min(1.0, float(kp[2])))
         return 0.0
 
     def _severity(self, value, limit):
+        """
+        计算“超过阈值”型严重度。
+
+        返回：
+        - 0~1 严重度，未超阈值时为 0。
+        """
         if limit <= 1e-6:
             return 0.0
         exceed = max(0.0, float(value) - float(limit))
         return min(1.0, exceed / float(limit))
 
     def _inverse_severity(self, value, minimum):
+        """
+        计算“低于最小值”型严重度。
+
+        返回：
+        - 0~1 严重度，满足最小值时为 0。
+        """
         if minimum <= 1e-6:
             return 0.0
         gap = max(0.0, float(minimum) - float(value))
@@ -898,6 +1084,15 @@ class PoseDetector:
         w_roll,
         w_side,
     ):
+        """
+        根据各异常分值选出主导异常类型。
+
+        为什么这样做：
+        - 多特征可能同时异常，需要按分值与边际比确定对外输出类别。
+
+        返回：
+        - `head_down` / `hunchback` / `tilt` 之一。
+        """
         head_score = max(sev_neck * w_neck, sev_head * w_head)
         torso_score = sev_torso * w_torso
         roll_score = max(sev_roll * w_roll, sev_side * w_side)
