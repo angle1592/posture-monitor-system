@@ -46,6 +46,18 @@ MODE_POSTURE = 0
 MODE_CLOCK = 1
 MODE_TIMER = 2
 
+PROP_ID_IS_POSTURE = "isPosture"
+PROP_ID_MONITORING_ENABLED = "monitoringEnabled"
+PROP_ID_CURRENT_MODE = "currentMode"
+PROP_ID_PERSON_PRESENT = "personPresent"
+PROP_ID_AMBIENT_LUX = "ambientLux"
+PROP_ID_ALERT_MODE_MASK = "alertModeMask"
+PROP_ID_COOLDOWN_MS = "cooldownMs"
+PROP_ID_TIMER_DURATION_SEC = "timerDurationSec"
+PROP_ID_TIMER_RUNNING = "timerRunning"
+PROP_ID_CFG_VERSION = "cfgVersion"
+PROP_ID_SELF_TEST = "selfTest"
+
 # === Alert Mode Bitmask ===
 ALERT_MODE_LED = 1 << 0  # 0x01
 ALERT_MODE_BUZZER = 1 << 1  # 0x02

@@ -44,6 +44,8 @@
 #define PROP_ID_IS_POSTURE        "isPosture"
 #define PROP_ID_MONITORING_ENABLED "monitoringEnabled"
 #define PROP_ID_CURRENT_MODE      "currentMode"
+#define PROP_ID_PERSON_PRESENT    "personPresent"
+#define PROP_ID_AMBIENT_LUX       "ambientLux"
 #define PROP_ID_ALERT_MODE_MASK   "alertModeMask"
 #define PROP_ID_COOLDOWN_MS       "cooldownMs"
 #define PROP_ID_TIMER_DURATION_SEC "timerDurationSec"

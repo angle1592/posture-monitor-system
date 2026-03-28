@@ -184,7 +184,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { onHide, onShow } from '@dcloudio/uni-app'
 import store from '@/utils/store'
 import PageShell from '@/components/ui/PageShell.vue'
@@ -272,7 +272,7 @@ function loadSettings() {
   try {
     const saved = uni.getStorageSync('controlPageSettings') as ControlPageSettings | undefined
     if (saved) {
-      selectedMode.value = saved.selectedMode || store.state.currentMode || 'posture'
+      selectedMode.value = store.state.currentMode || saved.selectedMode || 'posture'
       selectedReminders.value = saved.selectedReminders || ['voice', 'light']
       timerEnabled.value = saved.timerEnabled || false
       selectedInterval.value = saved.selectedInterval ?? 1
@@ -415,11 +415,20 @@ async function runHardwareSelfTest() {
   uni.showToast({ title: '已触发自检', icon: 'success' })
 }
 
+watch(
+  () => store.state.currentMode,
+  (mode) => {
+    if (mode && selectedMode.value !== mode) {
+      selectedMode.value = mode
+      saveSettings()
+    }
+  }
+)
+
 onShow(() => {
   store.setPollingProfile('realtime')
-  void store.fetchLatest()
-  selectedMode.value = store.state.currentMode || 'posture'
   loadSettings()
+  void store.fetchLatest()
 })
 
 onHide(() => {

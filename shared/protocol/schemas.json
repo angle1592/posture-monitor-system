@@ -54,6 +54,8 @@
         "isPosture":          { "type": "boolean", "description": "true=normal posture, false=abnormal" },
         "monitoringEnabled":  { "type": "boolean" },
         "currentMode":        { "$ref": "#/definitions/SystemMode" },
+        "personPresent":      { "type": "boolean", "description": "true=person present by PIR/K230 absence gating" },
+        "ambientLux":         { "type": "integer", "description": "Ambient light level from BH1750 in lux" },
         "alertModeMask":      { "$ref": "#/definitions/AlertModeMask" },
         "cooldownMs":         { "type": "integer", "description": "Alert cooldown in milliseconds" },
         "timerDurationSec":   { "type": "integer", "description": "Timer duration in seconds" },

@@ -51,6 +51,10 @@ APP_CONFIG = {
     "camera_preview_pixformat": "YUV420SP",
     # 检测间隔 ms（越小刷新越快，CPU/NPU负载越高）
     "detection_interval": 120,
+    # UART 发送间隔 ms（仅限制发往 ESP32 的频率，不影响识别本身持续运行）
+    # 调大 -> 串口压力更小，但云端/ESP32 看到的状态刷新更慢。
+    # 建议范围：300 ~ 500；建议先保持识别连续，仅调这个参数。
+    "uart_send_interval_ms": 400,
     "camera_flush_frames": 1,
     # 连续异常帧阈值（达到后触发提醒）
     "abnormal_threshold": 2,
@@ -59,7 +63,7 @@ APP_CONFIG = {
     # UART 控制器编号（对应 machine.UART 的设备号）
     "uart_id": 1,
     # UART 波特率（需与 ESP32 端完全一致）
-    "uart_baudrate": 115200,
+    "uart_baudrate": 9600,
     # UART TX 引脚号（K230 发往 ESP32 RX）
     "uart_tx_pin": 3,
     # UART RX 引脚号（K230 接收 ESP32 TX）

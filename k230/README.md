@@ -1,4 +1,4 @@
-# K230Vision
+# refactored/k230
 
 K230-side vision module for real-time human posture detection. The program captures camera frames, runs YOLOv8n-pose inference on device, classifies posture state, and sends structured JSON data to ESP32 through UART.
 
@@ -13,7 +13,7 @@ K230-side vision module for real-time human posture detection. The program captu
 ## Repository Layout
 
 ```text
-K230Vision/
+refactored/k230/
 ├── src/
 │   ├── main.py
 │   ├── config.py
@@ -24,8 +24,10 @@ K230Vision/
 ├── models/
 │   └── yolov8n_pose.kmodel
 ├── docs/
-└── tests/
+└── README.md
 ```
+
+Note: legacy copies may still use the `K230Vision` name, but the active subtree for current development is `refactored/k230`.
 
 ## Environment
 
@@ -37,8 +39,13 @@ K230Vision/
 
 1. Connect K230 board in CanMV IDE.
 2. Upload `src/*.py` to the board.
-3. Upload `models/yolov8n_pose.kmodel` to device storage (for example `/sdcard/models/`).
+3. Upload `models/yolov8n_pose.kmodel` to device storage. The current code/config commonly references `/sdcard/examples/kmodel/`.
 4. Run `main.py`.
+
+## Testing
+
+- No verified current host-side test module was found under `refactored/k230/tests` during this cleanup.
+- Prefer board-level/manual verification unless a real test file is added and documented.
 
 ## UART Contract (to ESP32)
 
@@ -50,6 +57,13 @@ Program outputs JSON lines over UART at `115200` baud, including fields such as:
 - `consecutive_abnormal`
 - `confidence`
 - `timestamp`
+
+## Docs
+
+- Product docs index: `refactored/docs/index.md`
+- `docs/k230-pinout.md`: K230 pin notes and wiring-related references.
+- `docs/integration-debug-summary-2026-02.md`: integration notes with ESP32.
+- `docs/worklog-2026-02-22.md`: historical development worklog.
 
 ## Troubleshooting
 

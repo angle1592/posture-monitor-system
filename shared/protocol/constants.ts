@@ -51,6 +51,8 @@ export const PROP_IDS = {
   IS_POSTURE: 'isPosture',
   MONITORING_ENABLED: 'monitoringEnabled',
   CURRENT_MODE: 'currentMode',
+  PERSON_PRESENT: 'personPresent',
+  AMBIENT_LUX: 'ambientLux',
   ALERT_MODE_MASK: 'alertModeMask',
   COOLDOWN_MS: 'cooldownMs',
   TIMER_DURATION_SEC: 'timerDurationSec',

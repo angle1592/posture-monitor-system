@@ -70,6 +70,8 @@ npm run type-check
 - Keep credentials and tokens out of repository files.
 - Prefer type-safe changes (`strict` TypeScript project).
 
-## API Docs
+## Docs
 
+- Product docs index: `refactored/docs/index.md`
+- OneNET property model: `docs/onenet-property-model.md`
 - OneNET API interface document: `docs/api/oneNet-api.md`

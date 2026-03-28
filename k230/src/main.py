@@ -33,8 +33,8 @@ K230视觉模块主程序 - 坐姿检测系统
 
 硬件连接：
     K230          ESP32
-    UART1_TX  ->  GPIO18 (RX)
-    UART1_RX  <-  GPIO17 (TX)
+    UART1_TX(GPIO3)  ->  GPIO18 (RX)
+    UART1_RX(GPIO4)  <-  GPIO17 (TX)
     GND       ->  GND
 
     波特率：115200
@@ -142,6 +142,12 @@ class SittingPostureMonitor:
             self.config.get("gc_collect_interval_frames", 80)
         )
         self.logger = get_logger("main", self.config.get("debug", False))
+        self.uart_send_ok_count = 0
+        self.uart_send_fail_count = 0
+        self.last_uart_send_error = ""
+        self.last_uart_send_ms = None
+        self._uart_none_warned = False
+        self.uart_send_interval_ms = int(self.config.get("uart_send_interval_ms", 400))
 
     def _now_ms(self):
         """
@@ -281,7 +287,10 @@ class SittingPostureMonitor:
         try:
             uart_id = int(self.config.get("uart_id", 1) or 1)
             uart_baud = int(self.config.get("uart_baudrate", 115200) or 115200)
+            tx_pin = int(self.config.get("uart_tx_pin", 3) or 3)
+            rx_pin = int(self.config.get("uart_rx_pin", 4) or 4)
             print("[*] UART参数: id={}, baud={}".format(uart_id, uart_baud))
+            print("[*] UART引脚: tx_pin={}, rx_pin={}".format(tx_pin, rx_pin))
 
             # FPIOA 引脚映射（失败不阻塞）
             fpioa_ok, fpioa_msg = self._configure_uart_fpioa(uart_id)
@@ -299,15 +308,25 @@ class SittingPostureMonitor:
             for uid in candidates:
                 for kwargs in ({"baudrate": uart_baud}, {}):
                     try:
-                        uart = UART(uid, uart_baud, **kwargs) if not kwargs else UART(uid, **{"baudrate": uart_baud})
-                        print("[+] UART初始化成功 (id={}, baud={})".format(uid, uart_baud))
+                        uart = (
+                            UART(uid, uart_baud, **kwargs)
+                            if not kwargs
+                            else UART(uid, **{"baudrate": uart_baud})
+                        )
+                        print(
+                            "[+] UART初始化成功 (id={}, baud={})".format(uid, uart_baud)
+                        )
                         return uart
                     except Exception:
                         pass
                 # 也尝试位置参数形式
                 try:
                     uart = UART(uid, uart_baud)
-                    print("[+] UART初始化成功 (id={}, baud={}, positional)".format(uid, uart_baud))
+                    print(
+                        "[+] UART初始化成功 (id={}, baud={}, positional)".format(
+                            uid, uart_baud
+                        )
+                    )
                     return uart
                 except Exception:
                     pass
@@ -398,11 +417,24 @@ class SittingPostureMonitor:
 
         # 3. 初始化UART通信（与ESP32通信）
         print("\n[*] 步骤3/4: 初始化UART通信...")
-        self.uart = self._init_uart() if self.config.get("enable_esp32_uart", False) else None
+        print(
+            "[*] UART开关: enable_esp32_uart={}, uart_id={}, tx_pin={}, rx_pin={}, baud={}".format(
+                self.config.get("enable_esp32_uart", False),
+                self.config.get("uart_id", 1),
+                self.config.get("uart_tx_pin", 3),
+                self.config.get("uart_rx_pin", 4),
+                self.config.get("uart_baudrate", 115200),
+            )
+        )
+        self.uart = (
+            self._init_uart() if self.config.get("enable_esp32_uart", False) else None
+        )
         if self.uart is None and self.config.get("enable_esp32_uart", False):
             print("[*] 继续运行，但无法与ESP32通信")
         elif self.uart is None:
             print("[*] 已禁用ESP32 UART，当前仅输出到K230 IDE串口")
+        else:
+            print("[+] ESP32 UART链路已启用，后续将直接发送JSON到ESP32")
         # 4. 检查存储目录
         print("\n[*] 步骤4/4: 检查存储目录...")
         try:
@@ -569,40 +601,55 @@ class SittingPostureMonitor:
             }
         """
         if self.uart is None:
+            if not self._uart_none_warned:
+                print("[!] send_to_esp32 skipped: UART is None")
+                self._uart_none_warned = True
+            self.uart_send_fail_count += 1
+            self.last_uart_send_error = "uart_none"
             return False
 
         try:
             import json
 
-            # UART/IDE JSON 字段说明：
-            # - frame_id: 当前处理帧号
-            # - posture_type: 粗粒度类别（normal/no_person/bad）
-            # - posture_type_fine: 细粒度类别（head_down/hunchback/tilt/unknown）
-            # - is_abnormal: 是否异常姿态（布尔）
-            # - consecutive_abnormal: 连续异常帧计数
-            # - confidence: 本帧人体检测置信度
-            # - person_debug/posture_debug: 过滤与姿态判定中间量，便于答辩展示数据流
-            # - timestamp: 发送时刻毫秒时间戳
             output = {
-                "frame_id": data.get("frame_id", 0),
                 "posture_type": data.get("posture_type", "unknown"),
-                "posture_type_fine": data.get("posture_type_fine", "unknown"),
                 "is_abnormal": data.get("is_abnormal", False),
                 "consecutive_abnormal": data.get("consecutive_abnormal", 0),
                 "confidence": data.get("confidence", 0.0),
-                "person_debug": data.get("person_debug", {}),
-                "posture_debug": data.get("posture_debug", {}),
-                "timestamp": time.ticks_ms(),
             }
             json_str = json.dumps(output) + "\n"
 
             # 发送数据
-            self.uart.write(json_str.encode())
+            written = self.uart.write(json_str.encode())
+            if written is None:
+                written = len(json_str)
+            self.uart_send_ok_count += 1
+            self.last_uart_send_error = ""
+            self.last_uart_send_ms = self._now_ms()
+            if self.runtime_verbose_logs and (self.uart_send_ok_count % 30 == 0):
+                print(
+                    "[*] UART发送统计: ok={}, fail={}, last_bytes={}".format(
+                        self.uart_send_ok_count,
+                        self.uart_send_fail_count,
+                        written,
+                    )
+                )
             return True
 
         except Exception as e:
+            self.uart_send_fail_count += 1
+            self.last_uart_send_error = str(e)
             print(f"[-] 发送数据到ESP32失败: {str(e)}")
             return False
+
+    def _should_send_uart(self, now_ms):
+        if self.last_uart_send_ms is None:
+            return True
+        if self.uart_send_interval_ms <= 0:
+            return True
+        return (
+            self._diff_ms(now_ms, self.last_uart_send_ms) >= self.uart_send_interval_ms
+        )
 
     def output_to_ide(self, data):
         """
@@ -779,9 +826,24 @@ class SittingPostureMonitor:
                 }
 
                 if self.config.get("enable_esp32_uart", False):
-                    self.send_to_esp32(output_payload)
+                    now_ms = self._now_ms()
+                    if self._should_send_uart(now_ms):
+                        self.send_to_esp32(output_payload)
                 else:
                     self.output_to_ide(output_payload)
+
+                if (
+                    self.config.get("enable_esp32_uart", False)
+                    and self.frame_count % 30 == 0
+                ):
+                    print(
+                        "[*] UART状态: ok={}, fail={}, uart_ready={}, last_error={}".format(
+                            self.uart_send_ok_count,
+                            self.uart_send_fail_count,
+                            self.uart is not None,
+                            self.last_uart_send_error or "none",
+                        )
+                    )
 
                 # 计算帧率
                 frame_time = time.time() - frame_start

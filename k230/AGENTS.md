@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-K230Vision is an embedded vision system for the K230 development board that performs real-time human pose detection and sitting posture analysis using YOLOv8n-pose. It communicates detection results to an ESP32 controller via UART for IoT integration.
+This directory contains the active K230 vision module under `refactored/k230`. It performs real-time human pose detection and sitting posture analysis using YOLOv8n-pose, then sends structured results to the ESP32 controller over UART.
 
 **Technology Stack:**
 - Language: Python (MicroPython variant for CanMV/K230)
@@ -16,23 +16,16 @@ K230Vision is an embedded vision system for the K230 development board that perf
 
 ### Testing
 
-```bash
-# Run algorithm unit tests on host machine (no K230 hardware required)
-python -m unittest tests/test_pose_algorithms.py -v
-
-# Run a single test class
-python -m unittest tests.test_pose_algorithms.TestPoseAlgorithms -v
-
-# Run a single test method
-python -m unittest tests.test_pose_algorithms.TestPoseAlgorithms.test_iou -v
-```
+- No verified current host-side test file was found under `refactored/k230/tests`.
+- Do not assume legacy `unittest` commands from older `K230Vision/` copies still apply here.
+- If you add or restore host-side tests later, update this section with exact file paths and single-test commands.
 
 ### Deployment
 
-No build step required. Deploy via CanMV IDE:
+No build step is evidenced. Deploy via CanMV IDE:
 1. Open CanMV IDE and connect to K230 board via USB
 2. Upload `src/*.py` files to the board
-3. Upload `models/yolov8n_pose.kmodel` to `/sdcard/models/` or `/sdcard/examples/kmodel/`
+3. Upload `models/yolov8n_pose.kmodel` to device storage (the current code/config commonly references `/sdcard/examples/kmodel/`)
 4. Run `main.py` from IDE
 
 ### Linting
@@ -187,7 +180,7 @@ Output format: `[LEVEL][module_name] message`
 ## Project Structure
 
 ```
-K230Vision/
+refactored/k230/
 ├── src/
 │   ├── __init__.py         # Package marker
 │   ├── main.py             # Main entry point, SittingPostureMonitor class
@@ -198,11 +191,11 @@ K230Vision/
 │   └── logger.py           # Simple logging utility
 ├── models/
 │   └── yolov8n_pose.kmodel # Model file (upload separately)
-├── tests/
-│   └── test_pose_algorithms.py  # Unit tests (stubs CanMV dependencies)
 ├── docs/                   # Documentation
 └── README.md               # Project documentation
 ```
+
+Note: a `tests/` directory may exist in legacy copies, but no current Python test module was verified in `refactored/k230/tests` during this review.
 
 ---
 
@@ -233,5 +226,5 @@ When modifying thresholds, update the config file and document the change in com
 2. **MicroPython limitations**: Some standard library features unavailable on K230
 3. **Chinese comments**: Primary documentation language is Chinese
 4. **NPU inference**: Model inference uses `nncase_runtime` with AI2D preprocessing
-5. **Testing**: Tests run on host Python with CanMV stubs; not on actual hardware
-6. **No git**: Project is not version controlled (has .history for local edits)
+5. **Testing**: Prefer board-level/manual verification unless a real host-side test file is present in this subtree.
+6. **Version control**: This project lives inside the active `refactored/` git repository; do not follow old notes from legacy copies that say otherwise.

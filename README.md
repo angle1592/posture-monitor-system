@@ -20,16 +20,12 @@
 
 ## 项目结构
 
-```
-posture-monitor-system/
+```text
+refactored/
+├── docs/                    # 产品总文档入口与系统级文档
 ├── shared/                  # 共享协议层 (三端统一常量)
-│   ├── protocol/
-│   │   ├── schemas.json     # JSON Schema 定义
-│   │   ├── constants.py     # K230 可用常量
-│   │   ├── constants.h      # ESP32 可用常量
-│   │   └── constants.ts     # App 可用常量
-│   └── docs/                # 系统级文档
-├── esp32/                   # ESP32-S3 固件 (Arduino)
+│   └── protocol/
+├── posture_monitor/         # ESP32-S3 固件 (Arduino)
 ├── k230/                    # K230 视觉模块 (MicroPython)
 ├── app/                     # 移动端 App (UniApp + Vue3 + TypeScript)
 └── scripts/                 # 工具脚本
@@ -61,6 +57,15 @@ posture-monitor-system/
 - **告警掩码**: `bit0=LED`, `bit1=Buzzer`, `bit2=Voice`
 
 修改协议时，更新 `shared/protocol/schemas.json` 后同步更新三种语言的常量文件。
+
+## 文档入口
+
+- 产品文档统一索引：`refactored/docs/index.md`
+- 系统架构文档：`refactored/docs/architecture.md`
+- ESP32 接线文档：`refactored/posture_monitor/docs/hardware-wiring.md`
+- K230 引脚文档：`refactored/k230/docs/k230-pinout.md`
+
+产品文档按领域存放：系统级文档放在 `refactored/docs/`，子系统专属文档放在各自子目录的 `docs/`，图表原稿与导出图放在工作区根目录 `diagrams/`。
 
 ## 开发指南
 
