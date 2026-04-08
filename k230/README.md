@@ -7,6 +7,8 @@ K230-side vision module for real-time human posture detection. The program captu
 - Camera acquisition on K230
 - YOLOv8n-pose inference (`.kmodel`)
 - Posture analysis (`normal`, `head_down`, `hunchback`, `tilt`, `no_person`)
+- Current default posture path uses the `legacy` risk-scoring + EMA hysteresis strategy
+- The baseline adaptive calibration path is kept in code as an experimental branch and is not enabled by default
 - UART JSON output for downstream IoT firmware
 - Structured runtime logging and fault-tolerant startup
 
