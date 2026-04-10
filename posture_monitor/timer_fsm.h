@@ -19,7 +19,7 @@ enum TimerState {
     TIMER_IDLE = 0,
     TIMER_RUNNING,
     TIMER_PAUSED,
-    TIMER_DONE
+    TIMER_DONE_PENDING
 };
 
 /*
@@ -64,13 +64,12 @@ void timer_tick(unsigned long now);
  * @brief 根据当前姿态与冷却策略决定是否触发提醒。
  * @details 该函数将“异常判定”与“提醒节流”集中管理，避免多处重复判断导致行为不一致。
  * @param now 当前系统毫秒时间戳
- * @param data 最新 K230 数据帧
  * @param monitoringEnabled 坐姿检测总开关
+ * @param shouldAlert 当前融合姿态是否需要提醒
  * @param testForcePosture 是否启用测试注入
  * @param testForceAbnormal 测试注入时是否强制异常
- * @param noPerson 当前是否可判定为无人
  */
-void timer_alertPolicyTick(unsigned long now, const K230Data* data, bool monitoringEnabled, bool testForcePosture, bool testForceAbnormal, bool noPerson);
+void timer_alertPolicyTick(unsigned long now, bool monitoringEnabled, bool shouldAlert, bool testForcePosture, bool testForceAbnormal);
 
 /**
  * @brief 将运行时配置同步到提醒执行层。
@@ -115,6 +114,8 @@ void timer_resume();
  * @details 用配置时长覆盖剩余时间，确保下一次 start 行为可预测。
  */
 void timer_reset();
+bool timer_isDonePending();
+void timer_ackDone();
 
 /**
  * @brief 查询是否处于“旋钮调时”模式。

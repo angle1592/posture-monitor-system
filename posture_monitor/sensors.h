@@ -1,8 +1,8 @@
 /**
  * @file sensors.h
- * @brief 传感器模块 — PIR 人体红外 + 光敏传感器
+ * @brief 传感器模块 — 人体存在传感器 + 光敏传感器
  * 
- * PIR：检测是否有人（数字量，GPIO4）
+ * 人体存在传感器：支持 PIR 或对射式红外（数字量）
  * 光敏：检测环境光线强度（BH1750 lux，GPIO1/GPIO2 I2C）
  * 
  * 当 ENABLE_PIR = 0 / ENABLE_LIGHT_SENSOR = 0 时，对应函数为 stub。
@@ -24,6 +24,7 @@
  * 对外提供的核心 API：
  * - sensors_init() / sensors_update()
  * - sensors_isPersonPresent() / sensors_getLightLevel()
+ * - sensors_setFillLight() / sensors_isFillLightOn()
  *
  * 依赖关系：
  * - Arduino GPIO/ADC 读写接口
@@ -67,8 +68,20 @@ bool sensors_isPersonPresent();
 int sensors_getLightLevel();
 
 /**
- * @brief PIR 是否已结束预热
- * @return true 预热完成或 PIR 未启用
+ * @brief 人体存在传感器是否已就绪
+ * @return true 传感器可参与人体存在判定
+ */
+bool sensors_isPresenceReady();
+
+/**
+ * @brief 当前是否检测到有人
+ * @return true 当前人体存在传感器认为有人在位
+ */
+bool sensors_isPresencePresent();
+
+/**
+ * @brief 旧接口兼容包装：PIR 是否已结束预热
+ * @return true 预热完成或人体存在传感器未启用
  */
 bool sensors_isPirReady();
 
@@ -77,5 +90,17 @@ bool sensors_isPirReady();
  * @return true 可认为 lux 数据有效
  */
 bool sensors_isLightSensorReady();
+
+/**
+ * @brief 控制补光 LED 开关
+ * @param on true 开灯，false 关灯
+ */
+void sensors_setFillLight(bool on);
+
+/**
+ * @brief 查询补光 LED 当前状态
+ * @return true 当前补光已开启
+ */
+bool sensors_isFillLightOn();
 
 #endif // SENSORS_H

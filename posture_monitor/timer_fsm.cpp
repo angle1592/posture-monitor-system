@@ -23,10 +23,22 @@ static TimerState _timerState = TIMER_IDLE;
 static unsigned long _timerEndMs = 0;
 static unsigned long _timerRemainSec = TIMER_DEFAULT_DURATION_SEC;
 static bool _timerAdjustMode = false;
+static unsigned long _timerNextReminderMs = 0;
 
 // 提醒策略独立状态：只负责“要不要提醒”，不直接参与计时器状态迁移。
 static AlertPolicyState _alertPolicyState = ALERT_POLICY_IDLE;
 static unsigned long _alertCooldownUntilMs = 0;
+
+static void _triggerTimerDoneReminder(unsigned long now) {
+    if ((alerts_getAlertMode() & ALERT_MODE_LED) != 0) {
+        alerts_triggerIndicatorPulse(TIMER_DONE_LED_PULSE_MS, 64, 0, 0);
+    }
+    alerts_triggerBuzzerPulse(BUZZER_PULSE_MS * 2);
+    if (alerts_voiceEnabled()) {
+        voice_speak("时间到了，时间到了");
+    }
+    _timerNextReminderMs = now + TIMER_DONE_REMINDER_INTERVAL_MS;
+}
 
 // =============================================================================
 // 核心逻辑
@@ -40,6 +52,7 @@ void timer_init() {
     _timerState = TIMER_IDLE;
     _timerRemainSec = _runtimeCfg.timerDurationSec;
     _timerAdjustMode = false;
+    _timerNextReminderMs = 0;
     _alertPolicyState = ALERT_POLICY_IDLE;
     _alertCooldownUntilMs = 0;
 }
@@ -58,6 +71,13 @@ void timer_tick(unsigned long now) {
         }
     }
 
+    if (_timerState == TIMER_DONE_PENDING) {
+        if (now >= _timerNextReminderMs) {
+            _triggerTimerDoneReminder(now);
+        }
+        return;
+    }
+
     // 只有 RUNNING 才推进倒计时；IDLE/PAUSED/DONE 都不应减少剩余时间。
     if (_timerState != TIMER_RUNNING) {
         return;
@@ -71,11 +91,8 @@ void timer_tick(unsigned long now) {
 
     // 到达或超过结束时刻：只在这里进入 DONE，确保结束行为只触发一次。
     _timerRemainSec = 0;
-    _timerState = TIMER_DONE;
-    alerts_triggerBuzzerPulse(BUZZER_PULSE_MS * 2);
-    if (alerts_voiceEnabled()) {
-        voice_speak("定时器结束");
-    }
+    _timerState = TIMER_DONE_PENDING;
+    _triggerTimerDoneReminder(now);
     display_showMessage("Timer done", NULL);
 }
 
@@ -83,26 +100,18 @@ void timer_tick(unsigned long now) {
  * @brief 按冷却策略决定是否触发坐姿提醒。
  * @details 流程是“先判异常是否成立，再判是否在冷却期”，避免无效提醒。
  * @param now 当前毫秒时间戳
- * @param data K230 当前帧数据
  * @param monitoringEnabled 坐姿检测总开关
+ * @param shouldAlert 当前融合姿态是否需要提醒
  * @param testForcePosture 是否启用测试姿态注入
  * @param testForceAbnormal 测试注入时是否强制异常
  */
-void timer_alertPolicyTick(unsigned long now, const K230Data* data, bool monitoringEnabled, bool testForcePosture, bool testForceAbnormal, bool noPerson) {
-    bool k230Ok = !k230_isTimeout(K230_TIMEOUT_MS);
-    bool dataValid = data->valid;
-    bool isAbnormal = data->isAbnormal;
+void timer_alertPolicyTick(unsigned long now, bool monitoringEnabled, bool shouldAlert, bool testForcePosture, bool testForceAbnormal) {
+    bool abnormalNow = monitoringEnabled && shouldAlert;
 
     // 测试注入优先级最高：用于脱离真实相机输入验证提醒链路。
     if (testForcePosture) {
-        k230Ok = true;
-        noPerson = false;
-        dataValid = true;
-        isAbnormal = testForceAbnormal;
+        abnormalNow = testForceAbnormal;
     }
-
-    // 只有“检测开启 + 链路正常 + 有人 + 数据有效 + 判定异常”才算应提醒。
-    bool abnormalNow = monitoringEnabled && k230Ok && !noPerson && dataValid && isAbnormal;
 
     // 一旦条件不成立，立即回到 IDLE。
     // 这么做的原因是：用户姿态恢复后，下次再次异常应立即允许提醒，不应被旧冷却期阻塞。
@@ -162,6 +171,7 @@ void timer_start() {
     _timerState = TIMER_RUNNING;
     _timerRemainSec = _runtimeCfg.timerDurationSec;
     _timerEndMs = millis() + _timerRemainSec * 1000UL;
+    _timerNextReminderMs = 0;
 }
 
 /**
@@ -198,6 +208,18 @@ void timer_resume() {
 void timer_reset() {
     _timerState = TIMER_IDLE;
     _timerRemainSec = _runtimeCfg.timerDurationSec;
+    _timerNextReminderMs = 0;
+}
+
+bool timer_isDonePending() {
+    return _timerState == TIMER_DONE_PENDING;
+}
+
+void timer_ackDone() {
+    if (_timerState != TIMER_DONE_PENDING) {
+        return;
+    }
+    timer_reset();
 }
 
 /**
@@ -227,7 +249,7 @@ void timer_adjustDuration(int deltaMins) {
     if (nextSec > TIMER_MAX_DURATION_SEC) nextSec = TIMER_MAX_DURATION_SEC;
     _runtimeCfg.timerDurationSec = (unsigned long)nextSec;
     _runtimeCfg.cfgVersion++;
-    if (_timerState == TIMER_IDLE || _timerState == TIMER_DONE) {
+    if (_timerState == TIMER_IDLE || _timerState == TIMER_DONE_PENDING || _timerState == TIMER_PAUSED) {
         _timerRemainSec = _runtimeCfg.timerDurationSec;
     }
     LOGI("[EC11] timerDurationSec=%lu (delta=%d)", _runtimeCfg.timerDurationSec, deltaMins);
@@ -273,7 +295,7 @@ void timer_setTimerDurationSec(unsigned long sec) {
     if (sec > TIMER_MAX_DURATION_SEC) sec = TIMER_MAX_DURATION_SEC;
     _runtimeCfg.timerDurationSec = sec;
     _runtimeCfg.cfgVersion++;
-    if (_timerState == TIMER_IDLE || _timerState == TIMER_DONE) {
+    if (_timerState == TIMER_IDLE || _timerState == TIMER_DONE_PENDING || _timerState == TIMER_PAUSED) {
         _timerRemainSec = _runtimeCfg.timerDurationSec;
     }
 }
@@ -287,9 +309,10 @@ void timer_setTimerDurationSec(unsigned long sec) {
  */
 void timer_setTimerRunning(bool running) {
     if (running) {
-        if (_timerState != TIMER_RUNNING) {
-            _timerState = TIMER_RUNNING;
-            _timerEndMs = millis() + _timerRemainSec * 1000UL;
+        if (_timerState == TIMER_IDLE) {
+            timer_start();
+        } else if (_timerState == TIMER_PAUSED) {
+            timer_resume();
         }
     } else {
         if (_timerState == TIMER_RUNNING) {

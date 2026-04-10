@@ -12,51 +12,50 @@ UART_TX_PIN = 3
 UART_RX_PIN = 4
 
 # === K230 UART JSON Field Names ===
-FIELD_FRAME_ID = "frame_id"
+# Active contract: the refactored K230 sends the minimal posture frame.
 FIELD_POSTURE_TYPE = "posture_type"
-FIELD_POSTURE_TYPE_FINE = "posture_type_fine"
-FIELD_IS_ABNORMAL = "is_abnormal"
-FIELD_CONSECUTIVE_ABNORMAL = "consecutive_abnormal"
-FIELD_CONFIDENCE = "confidence"
-FIELD_TIMESTAMP = "timestamp"
-FIELD_PERSON_DEBUG = "person_debug"
-FIELD_POSTURE_DEBUG = "posture_debug"
 
 # === Posture Type Enum Values ===
 POSTURE_NORMAL = "normal"
 POSTURE_HEAD_DOWN = "head_down"
 POSTURE_HUNCHBACK = "hunchback"
-POSTURE_TILT = "tilt"
 POSTURE_NO_PERSON = "no_person"
 POSTURE_UNKNOWN = "unknown"
-POSTURE_BAD = "bad"
 
 ALL_POSTURE_TYPES = (
     POSTURE_NORMAL,
     POSTURE_HEAD_DOWN,
     POSTURE_HUNCHBACK,
-    POSTURE_TILT,
     POSTURE_NO_PERSON,
     POSTURE_UNKNOWN,
-    POSTURE_BAD,
 )
+
+# === Fused Posture Type Codes (ESP32 -> OneNET) ===
+POSTURE_CODE_NO_PERSON = 0
+POSTURE_CODE_NORMAL = 1
+POSTURE_CODE_HEAD_DOWN = 2
+POSTURE_CODE_HUNCHBACK = 3
 
 # === System Modes ===
 MODE_POSTURE = 0
 MODE_CLOCK = 1
 MODE_TIMER = 2
 
-PROP_ID_IS_POSTURE = "isPosture"
+PROP_ID_POSTURE_TYPE = "postureType"
 PROP_ID_MONITORING_ENABLED = "monitoringEnabled"
 PROP_ID_CURRENT_MODE = "currentMode"
 PROP_ID_PERSON_PRESENT = "personPresent"
 PROP_ID_AMBIENT_LUX = "ambientLux"
+PROP_ID_FILL_LIGHT_ON = "fillLightOn"
 PROP_ID_ALERT_MODE_MASK = "alertModeMask"
 PROP_ID_COOLDOWN_MS = "cooldownMs"
 PROP_ID_TIMER_DURATION_SEC = "timerDurationSec"
 PROP_ID_TIMER_RUNNING = "timerRunning"
 PROP_ID_CFG_VERSION = "cfgVersion"
 PROP_ID_SELF_TEST = "selfTest"
+
+# Legacy property kept temporarily for old consumers during migration.
+PROP_ID_IS_POSTURE = "isPosture"
 
 # === Alert Mode Bitmask ===
 ALERT_MODE_LED = 1 << 0  # 0x01

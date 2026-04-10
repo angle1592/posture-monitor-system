@@ -5,14 +5,12 @@
  * K230 通过 UART1 以 115200 波特率发送 \n 结尾的 JSON 数据，约每 200ms 一帧。
  * 
  * K230 发送的 JSON 格式：
- * {"frame_id":123,"posture_type":"normal","is_abnormal":false,
- *  "consecutive_abnormal":0,"confidence":0.95,"timestamp":123456}
+ * {"posture_type":"normal"}
  * 
  * posture_type 取值：
  * - "normal"    — 坐姿正常
  * - "head_down" — 低头
  * - "hunchback" — 驼背
- * - "tilt"      — 歪头/侧倾
  * - "no_person" — 无人
  * - "unknown"   — 未知
  * 
@@ -29,7 +27,7 @@
  *
  * 模块职责：
  * - 从 UART 非阻塞接收 K230 输出的逐帧文本/JSON 数据。
- * - 使用轻量字符串策略解析 posture_type、is_abnormal 等关键字段。
+ * - 使用轻量字符串策略解析 posture_type，并派生内部异常状态。
  * - 维护最近一帧有效姿态数据与通信健康状态（超时、静默等）。
  *
  * 对外提供的核心 API：
@@ -58,10 +56,10 @@
  * @brief K230 坐姿数据
  */
 typedef struct {
-    char postureType[16];       // "normal", "head_down", "hunchback", "tilt", "no_person", "unknown"
-    bool isAbnormal;            // 是否异常
-    int consecutiveAbnormal;    // 连续异常帧数
-    float confidence;           // 置信度 0.0~1.0
+    char postureType[16];       // "normal", "head_down", "hunchback", "no_person", "unknown"
+    bool isAbnormal;            // 由 postureType 派生的异常标志
+    int consecutiveAbnormal;    // 兼容字段：异常类为 1，否则为 0
+    float confidence;           // 兼容字段：最小协议不提供，默认 0.0
     unsigned long lastUpdateTime;  // 最后更新时间（millis）
     bool valid;                 // 是否有有效数据
 } K230Data;
@@ -114,5 +112,7 @@ unsigned long k230_getFrameCount();
 bool k230_hasSeenAnyByte();
 
 unsigned long k230_getSilenceMs();
+
+bool k230_setDetectionEnabled(bool enabled);
 
 #endif // K230_PARSER_H

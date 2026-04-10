@@ -3,7 +3,7 @@
 
 模块职责：
 - 负责 YOLOv8n-pose 模型加载、预处理、推理与后处理。
-- 从关键点中提取几何特征并判定姿态类型（normal/head_down/hunchback/tilt）。
+- 从关键点中提取几何特征并判定姿态类型（normal/head_down/hunchback/unknown）。
 - 输出姿态风险中间量，供主程序打包为 UART JSON 发送给 ESP32。
 
 与其他模块的关系：
@@ -75,8 +75,8 @@ class PoseDetector:
     关键属性含义：
     - `kpu`：模型推理对象。
     - `ai2d_builder`：预处理图构建器，随输入尺寸变化重建。
-    - `posture_state`：迟滞状态机（normal/abnormal）。
-    - `class_ema`：各姿态类别平滑分值，用于降低抖动。
+    - `stable_posture_type`：当前稳定输出的姿态类别。
+    - `pending_posture_type`：等待确认的新类别。
     - `last_person_debug`：最近一次人体存在过滤结果。
     """
 
@@ -123,58 +123,21 @@ class PoseDetector:
             PERSON_FILTER.get("person_min_bbox_area_ratio", 0.03)
         )
         self.person_min_keypoints = int(PERSON_FILTER.get("person_min_keypoints", 4))
-        self.risk_alpha = float(self.posture_thresholds.get("risk_ema_alpha", 0.4))
-        self.risk_enter = float(self.posture_thresholds.get("risk_enter", 0.55))
-        self.risk_exit = float(self.posture_thresholds.get("risk_exit", 0.35))
-        self.risk_instant_enter = float(
-            self.posture_thresholds.get("risk_instant_enter", self.risk_enter)
+        self.torso_tilt_threshold_deg = float(
+            self.posture_thresholds.get("torso_tilt_threshold_deg", 18.0)
         )
-        self.risk_soft_enter = float(
-            self.posture_thresholds.get("risk_soft_enter", self.risk_instant_enter)
+        self.head_tilt_threshold_deg = float(
+            self.posture_thresholds.get("head_tilt_threshold_deg", 24.0)
         )
-        self.dominant_score_gap_enter = float(
-            self.posture_thresholds.get("dominant_score_gap_enter", 0.035)
+        self.required_keypoint_confidence = float(
+            self.posture_thresholds.get("required_keypoint_confidence", 0.25)
         )
-        self.risk_instant_exit = float(
-            self.posture_thresholds.get("risk_instant_exit", self.risk_exit)
+        self.stable_frame_count = int(
+            self.posture_thresholds.get("stable_frame_count", 1)
         )
-        self.side_face_min_ratio = float(
-            self.posture_thresholds.get("side_face_min_ratio", 0.5)
-        )
-        self.w_side_face = float(self.posture_thresholds.get("w_side_face", 0.08))
-        self.w_side_risk_factor = float(
-            self.posture_thresholds.get("w_side_risk_factor", 0.35)
-        )
-        self.posture_mode = str(self.posture_thresholds.get("posture_mode", "legacy"))
-        self.baseline_warmup_frames = int(
-            self.posture_thresholds.get("baseline_warmup_frames", 20)
-        )
-        self.class_score_alpha = float(
-            self.posture_thresholds.get("class_score_alpha", 0.5)
-        )
-        self.class_enter = float(self.posture_thresholds.get("class_enter", 0.56))
-        self.class_exit = float(self.posture_thresholds.get("class_exit", 0.42))
-        self.class_instant_enter = float(
-            self.posture_thresholds.get("class_instant_enter", 0.62)
-        )
-        self.class_instant_exit = float(
-            self.posture_thresholds.get("class_instant_exit", 0.36)
-        )
-        self.view_side_ratio = float(
-            self.posture_thresholds.get("view_side_ratio", 0.14)
-        )
-        self.view_semiside_ratio = float(
-            self.posture_thresholds.get("view_semiside_ratio", 0.24)
-        )
-        self.posture_state = "normal"
-        self.posture_risk_ema = 0.0
-        self.class_ema = {"head_down": 0.0, "hunchback": 0.0, "tilt": 0.0}
-        self.baseline_ready = False
-        self.baseline_count = 0
-        self.baseline_neck = 0.0
-        self.baseline_torso = 0.0
-        self.baseline_roll = 0.0
-        self.baseline_head_forward = 0.0
+        self.stable_posture_type = "normal"
+        self.pending_posture_type = None
+        self.pending_posture_count = 0
 
         self.kpu = None
         self.ai2d = None
@@ -190,7 +153,7 @@ class PoseDetector:
 
     def reset_posture_state(self):
         """
-        重置姿态状态机与平滑分值。
+        重置姿态稳定状态。
 
         为什么这样做：
         - 连续无人后重新入镜时，避免沿用旧状态导致误报。
@@ -198,9 +161,9 @@ class PoseDetector:
         返回：
         - 无返回值。
         """
-        self.posture_state = "normal"
-        self.posture_risk_ema = 0.0
-        self.class_ema = {"head_down": 0.0, "hunchback": 0.0, "tilt": 0.0}
+        self.stable_posture_type = "normal"
+        self.pending_posture_type = None
+        self.pending_posture_count = 0
 
     def initialize(self):
         """
@@ -599,7 +562,7 @@ class PoseDetector:
                 self.last_person_debug = person_debug
                 return None
 
-            pose_type, angles = self._analyze_posture_detailed(best["keypoints"])
+            pose_type, angles = self._analyze_posture(best["keypoints"])
             best["pose_type"] = pose_type
             best["angles"] = angles
             best["person_debug"] = person_debug
@@ -610,407 +573,141 @@ class PoseDetector:
             self.last_person_debug = {"reason": "detect_exception", "error": str(e)}
             return None
 
-    def _analyze_posture_detailed(self, keypoints):
+    def _analyze_posture(self, keypoints):
         """
-        经典路径：基于几何特征与风险融合判定姿态。
+        基于 5 个关键点的几何规则判定姿态类别。
 
         为什么这样做：
-        - 将颈部、躯干、侧倾等异常信号做加权融合，再用 EMA+迟滞降低抖动。
+        - 直接使用鼻子、双肩、双髋的几何关系，便于论文解释。
+        - 仅保留驼背与低头两类异常，并输出最小必要调试量。
 
         返回：
         - `(posture_type, angles_dict)`。
         """
-        if self.posture_mode == "decoupled":
-            return self._analyze_posture_decoupled(keypoints)
-        if not keypoints or len(keypoints) < 17:
-            return "unknown", {"neck": 0.0, "back": 0.0, "shoulder_diff": 0.0}
+        required_keypoints = self._extract_required_keypoints(keypoints)
+        if required_keypoints is None:
+            return "unknown", {
+                "required_keypoints_ready": False,
+                "torso_tilt_deg": 0.0,
+                "head_tilt_deg": 0.0,
+                "torso_excess_ratio": 0.0,
+                "head_excess_ratio": 0.0,
+                "stable_frame_count": int(self.stable_frame_count),
+            }
 
-        nose = keypoints[self.KEYPOINT_INDICES["nose"]]
-        left_shoulder = keypoints[self.KEYPOINT_INDICES["left_shoulder"]]
-        right_shoulder = keypoints[self.KEYPOINT_INDICES["right_shoulder"]]
-        left_hip = keypoints[self.KEYPOINT_INDICES["left_hip"]]
-        right_hip = keypoints[self.KEYPOINT_INDICES["right_hip"]]
+        nose = required_keypoints["nose"]
+        left_shoulder = required_keypoints["left_shoulder"]
+        right_shoulder = required_keypoints["right_shoulder"]
+        left_hip = required_keypoints["left_hip"]
+        right_hip = required_keypoints["right_hip"]
 
-        shoulder_center = (
-            (left_shoulder[0] + right_shoulder[0]) / 2.0,
-            (left_shoulder[1] + right_shoulder[1]) / 2.0,
-        )
-        hip_center = (
-            (left_hip[0] + right_hip[0]) / 2.0,
-            (left_hip[1] + right_hip[1]) / 2.0,
-        )
-
-        shoulder_width = self._distance(left_shoulder, right_shoulder)
-        hip_width = self._distance(left_hip, right_hip)
-        if shoulder_width <= 1e-6:
-            return "unknown", {"neck": 0.0, "back": 0.0, "shoulder_diff": 0.0}
-
-        torso_tilt = self._tilt_from_vertical(shoulder_center, hip_center)
-        neck_tilt = self._tilt_from_vertical(shoulder_center, nose)
-        neck_relative_tilt = max(0.0, neck_tilt - torso_tilt)
-        torso_length = self._distance(shoulder_center, hip_center)
+        shoulder_midpoint = self._midpoint(left_shoulder, right_shoulder)
+        hip_midpoint = self._midpoint(left_hip, right_hip)
+        torso_length = self._distance(shoulder_midpoint, hip_midpoint)
         if torso_length <= 1e-6:
-            return "unknown", {"neck": 0.0, "back": 0.0, "shoulder_diff": 0.0}
-        stable_shoulder_width = max(shoulder_width, torso_length * 0.35)
-        head_forward_ratio = abs(nose[0] - shoulder_center[0]) / stable_shoulder_width
-        shoulder_roll_ratio = (
-            abs(left_shoulder[1] - right_shoulder[1]) / stable_shoulder_width
-        )
-        shoulder_width_ratio = shoulder_width / torso_length
-        hip_width_ratio = hip_width / torso_length
-        side_face_ratio = min(shoulder_width_ratio, hip_width_ratio)
+            return "unknown", {
+                "required_keypoints_ready": False,
+                "torso_tilt_deg": 0.0,
+                "head_tilt_deg": 0.0,
+                "torso_excess_ratio": 0.0,
+                "head_excess_ratio": 0.0,
+                "stable_frame_count": int(self.stable_frame_count),
+            }
 
-        c_shoulder = min(self._kp_conf(left_shoulder), self._kp_conf(right_shoulder))
-        c_torso = min(
-            c_shoulder, min(self._kp_conf(left_hip), self._kp_conf(right_hip))
+        torso_tilt_deg = self._tilt_from_vertical(shoulder_midpoint, hip_midpoint)
+        head_tilt_deg = self._tilt_from_vertical(nose, shoulder_midpoint)
+        torso_excess_ratio = self._excess_ratio(
+            torso_tilt_deg, self.torso_tilt_threshold_deg
         )
-        c_neck = min(c_shoulder, self._kp_conf(nose))
-        c_roll = c_shoulder
-
-        thresholds = self.posture_thresholds
-        sev_torso = self._severity(
-            torso_tilt, float(thresholds.get("torso_tilt_max_deg", 18.0))
-        )
-        sev_neck_abs = self._severity(
-            neck_tilt, float(thresholds.get("neck_tilt_max_deg", 24.0))
-        )
-        sev_neck_rel = self._severity(
-            neck_relative_tilt,
-            float(
-                thresholds.get(
-                    "neck_relative_tilt_max_deg",
-                    thresholds.get("neck_tilt_max_deg", 24.0),
-                )
-            ),
-        )
-        sev_neck = max(sev_neck_rel, sev_neck_abs * 0.45)
-        sev_head = self._severity(
-            head_forward_ratio, float(thresholds.get("head_forward_ratio_max", 0.35))
-        )
-        sev_roll = self._severity(
-            shoulder_roll_ratio, float(thresholds.get("shoulder_roll_ratio_max", 0.22))
-        )
-        sev_side = self._inverse_severity(
-            side_face_ratio,
-            float(thresholds.get("side_face_min_ratio", self.side_face_min_ratio)),
+        head_excess_ratio = self._excess_ratio(
+            head_tilt_deg, self.head_tilt_threshold_deg
         )
 
-        w_torso = float(thresholds.get("w_torso", 0.35)) * c_torso
-        w_neck = float(thresholds.get("w_neck", 0.30)) * c_neck
-        head_reliability = max(
-            0.35,
-            min(
-                1.0,
-                side_face_ratio
-                / max(float(thresholds.get("side_face_min_ratio", 0.5)), 1e-6),
-            ),
-        )
-        w_head = (
-            float(thresholds.get("w_head_forward", 0.20)) * c_neck * head_reliability
-        )
-        w_roll = float(thresholds.get("w_roll", 0.15)) * c_roll
-        w_side = float(thresholds.get("w_side_face", self.w_side_face)) * c_torso
-        w_side_risk = w_side * float(
-            thresholds.get("w_side_risk_factor", self.w_side_risk_factor)
-        )
+        pose_type = "normal"
+        if torso_excess_ratio > 0.0 and head_excess_ratio <= 0.0:
+            pose_type = "hunchback"
+        elif head_excess_ratio > 0.0 and torso_excess_ratio <= 0.0:
+            pose_type = "head_down"
+        elif torso_excess_ratio > 0.0 and head_excess_ratio > 0.0:
+            if torso_excess_ratio > head_excess_ratio:
+                pose_type = "hunchback"
+            else:
+                pose_type = "head_down"
 
-        weighted_sum = (
-            w_torso * sev_torso
-            + w_neck * sev_neck
-            + w_head * sev_head
-            + w_roll * sev_roll
-            + w_side_risk * sev_side
-        )
-        weight_total = w_torso + w_neck + w_head + w_roll + w_side_risk
-        risk = weighted_sum / weight_total if weight_total > 1e-6 else 0.0
-
-        head_margin = float(thresholds.get("head_dominance_margin", 1.12))
-        torso_margin = float(thresholds.get("torso_dominance_margin", 1.08))
-        tilt_margin = float(thresholds.get("tilt_dominance_margin", 1.05))
-
-        alpha = max(0.0, min(1.0, self.risk_alpha))
-        # 用 EMA + 进入/退出双阈值做迟滞，减少边界帧抖动导致的标签闪烁。
-        self.posture_risk_ema = alpha * risk + (1.0 - alpha) * self.posture_risk_ema
-        head_score_now = max(sev_neck * w_neck, sev_head * w_head)
-        torso_score_now = sev_torso * w_torso
-        roll_score_now = max(sev_roll * w_roll, sev_side * w_side)
-        scores_sorted = sorted(
-            [head_score_now, torso_score_now, roll_score_now], reverse=True
-        )
-        dominant_gap = scores_sorted[0] - scores_sorted[1]
-        if self.posture_state == "normal":
-            if (
-                self.posture_risk_ema >= self.risk_enter
-                or risk >= self.risk_instant_enter
-                or (
-                    risk >= self.risk_soft_enter
-                    and dominant_gap >= self.dominant_score_gap_enter
-                )
-            ):
-                self.posture_state = "abnormal"
-        elif self.posture_risk_ema <= self.risk_exit and risk <= self.risk_instant_exit:
-            self.posture_state = "normal"
-
-        dominant = self._dominant_abnormal(
-            sev_torso=sev_torso,
-            sev_neck=sev_neck,
-            sev_head=sev_head,
-            sev_roll=sev_roll,
-            sev_side=sev_side,
-            neck_tilt=neck_tilt,
-            torso_tilt=torso_tilt,
-            head_margin=head_margin,
-            torso_margin=torso_margin,
-            tilt_margin=tilt_margin,
-            w_torso=w_torso,
-            w_neck=w_neck,
-            w_head=w_head,
-            w_roll=w_roll,
-            w_side=w_side,
-        )
-        posture = "normal" if self.posture_state == "normal" else dominant
-
-        head_score = max(sev_neck * w_neck, sev_head * w_head)
-        torso_score = sev_torso * w_torso
-        roll_score = max(sev_roll * w_roll, sev_side * w_side)
-
-        return posture, {
-            "neck": float(neck_tilt),
-            "neck_relative": float(neck_relative_tilt),
-            "back": float(torso_tilt),
-            "shoulder_diff": float(shoulder_roll_ratio),
-            "shoulder_width_ratio": float(shoulder_width_ratio),
-            "hip_width_ratio": float(hip_width_ratio),
-            "side_face_ratio": float(side_face_ratio),
-            "head_forward_ratio": float(head_forward_ratio),
-            "head_reliability": float(head_reliability),
-            "sev_torso": float(sev_torso),
-            "sev_neck": float(sev_neck),
-            "sev_neck_abs": float(sev_neck_abs),
-            "sev_neck_rel": float(sev_neck_rel),
-            "sev_head": float(sev_head),
-            "sev_roll": float(sev_roll),
-            "sev_side": float(sev_side),
-            "score_head": float(head_score),
-            "score_torso": float(torso_score),
-            "score_tilt": float(roll_score),
-            "score_gap": float(dominant_gap),
-            "risk": float(risk),
-            "risk_ema": float(self.posture_risk_ema),
+        stable_pose_type = self._stabilize_posture_type(pose_type)
+        return stable_pose_type, {
+            "required_keypoints_ready": True,
+            "shoulder_midpoint": [
+                float(shoulder_midpoint[0]),
+                float(shoulder_midpoint[1]),
+            ],
+            "hip_midpoint": [float(hip_midpoint[0]), float(hip_midpoint[1])],
+            "torso_length": float(torso_length),
+            "torso_tilt_deg": float(torso_tilt_deg),
+            "head_tilt_deg": float(head_tilt_deg),
+            "torso_excess_ratio": float(torso_excess_ratio),
+            "head_excess_ratio": float(head_excess_ratio),
+            "stable_frame_count": int(self.stable_frame_count),
+            "stable_posture_type": stable_pose_type,
         }
 
-    def _analyze_posture_decoupled(self, keypoints):
+    def _extract_required_keypoints(self, keypoints):
         """
-        解耦路径：分别计算 head_down/hunchback/tilt 分数后再做状态机判定。
-
-        为什么这样做：
-        - 便于解释各类别贡献，适合论文与答辩展示“分类分值如何形成”。
+        提取姿态判定所需的 5 个关键点。
 
         返回：
-        - `(posture_type, angles_dict)`。
+        - 关键点字典。
+        - 任意关键点缺失或置信度不足时返回 `None`。
         """
-        if not keypoints or len(keypoints) < 17:
-            return "unknown", {"neck": 0.0, "back": 0.0, "shoulder_diff": 0.0}
+        if not keypoints or len(keypoints) <= self.KEYPOINT_INDICES["right_hip"]:
+            return None
 
-        nose = keypoints[self.KEYPOINT_INDICES["nose"]]
-        left_shoulder = keypoints[self.KEYPOINT_INDICES["left_shoulder"]]
-        right_shoulder = keypoints[self.KEYPOINT_INDICES["right_shoulder"]]
-        left_hip = keypoints[self.KEYPOINT_INDICES["left_hip"]]
-        right_hip = keypoints[self.KEYPOINT_INDICES["right_hip"]]
-
-        shoulder_center = (
-            (left_shoulder[0] + right_shoulder[0]) / 2.0,
-            (left_shoulder[1] + right_shoulder[1]) / 2.0,
+        required_names = (
+            "nose",
+            "left_shoulder",
+            "right_shoulder",
+            "left_hip",
+            "right_hip",
         )
-        hip_center = (
-            (left_hip[0] + right_hip[0]) / 2.0,
-            (left_hip[1] + right_hip[1]) / 2.0,
-        )
+        result = {}
+        for name in required_names:
+            keypoint = keypoints[self.KEYPOINT_INDICES[name]]
+            if len(keypoint) < 3:
+                return None
+            if self._kp_conf(keypoint) < self.required_keypoint_confidence:
+                return None
+            result[name] = keypoint
+        return result
 
-        shoulder_width = self._distance(left_shoulder, right_shoulder)
-        hip_width = self._distance(left_hip, right_hip)
-        torso_length = self._distance(shoulder_center, hip_center)
-        if shoulder_width <= 1e-6 or torso_length <= 1e-6:
-            return "unknown", {"neck": 0.0, "back": 0.0, "shoulder_diff": 0.0}
+    def _stabilize_posture_type(self, pose_type):
+        """
+        按连续帧数要求稳定姿态类别。
 
-        stable_shoulder_width = max(shoulder_width, torso_length * 0.35)
-        torso_tilt = self._tilt_from_vertical(shoulder_center, hip_center)
-        neck_tilt = self._tilt_from_vertical(shoulder_center, nose)
-        shoulder_roll_ratio = (
-            abs(left_shoulder[1] - right_shoulder[1]) / stable_shoulder_width
-        )
-        head_forward_ratio = abs(nose[0] - shoulder_center[0]) / stable_shoulder_width
-        shoulder_width_ratio = shoulder_width / torso_length
-        hip_width_ratio = hip_width / torso_length
-        side_face_ratio = min(shoulder_width_ratio, hip_width_ratio)
+        返回：
+        - 当前稳定输出的姿态类别。
+        """
+        if self.stable_frame_count <= 1:
+            self.stable_posture_type = pose_type
+            self.pending_posture_type = None
+            self.pending_posture_count = 0
+            return pose_type
 
-        c_shoulder = min(self._kp_conf(left_shoulder), self._kp_conf(right_shoulder))
-        c_torso = min(
-            c_shoulder, min(self._kp_conf(left_hip), self._kp_conf(right_hip))
-        )
-        c_neck = min(c_shoulder, self._kp_conf(nose))
+        if pose_type == self.stable_posture_type:
+            self.pending_posture_type = None
+            self.pending_posture_count = 0
+            return self.stable_posture_type
 
-        if side_face_ratio < self.view_side_ratio:
-            view_state = "side"
-        elif side_face_ratio < self.view_semiside_ratio:
-            view_state = "semi_side"
-        else:
-            view_state = "frontal"
+        if pose_type != self.pending_posture_type:
+            self.pending_posture_type = pose_type
+            self.pending_posture_count = 1
+            return self.stable_posture_type
 
-        if (
-            self.baseline_count < self.baseline_warmup_frames
-            and c_torso > 0.25
-            and c_neck > 0.25
-        ):
-            if view_state != "side":
-                # baseline 只在非纯侧身视角更新，避免侧身几何比例污染基线。
-                n = float(self.baseline_count)
-                self.baseline_neck = (self.baseline_neck * n + neck_tilt) / (n + 1.0)
-                self.baseline_torso = (self.baseline_torso * n + torso_tilt) / (n + 1.0)
-                self.baseline_roll = (self.baseline_roll * n + shoulder_roll_ratio) / (
-                    n + 1.0
-                )
-                self.baseline_head_forward = (
-                    self.baseline_head_forward * n + head_forward_ratio
-                ) / (n + 1.0)
-                self.baseline_count += 1
-                self.baseline_ready = self.baseline_count >= self.baseline_warmup_frames
-
-        base_neck = self.baseline_neck if self.baseline_count > 0 else neck_tilt
-        base_torso = self.baseline_torso if self.baseline_count > 0 else torso_tilt
-        base_roll = (
-            self.baseline_roll if self.baseline_count > 0 else shoulder_roll_ratio
-        )
-        base_head = (
-            self.baseline_head_forward
-            if self.baseline_count > 0
-            else head_forward_ratio
-        )
-
-        neck_delta = max(0.0, neck_tilt - base_neck)
-        torso_delta = max(0.0, torso_tilt - base_torso)
-        roll_delta = max(0.0, shoulder_roll_ratio - base_roll)
-        head_delta = max(0.0, head_forward_ratio - base_head)
-
-        sev_neck_delta = self._severity(
-            neck_delta, float(self.posture_thresholds.get("neck_delta_max_deg", 12.0))
-        )
-        sev_torso_delta = self._severity(
-            torso_delta, float(self.posture_thresholds.get("torso_delta_max_deg", 10.0))
-        )
-        sev_roll_delta = self._severity(
-            roll_delta, float(self.posture_thresholds.get("roll_delta_max", 0.16))
-        )
-        sev_head_delta = self._severity(
-            head_delta,
-            float(self.posture_thresholds.get("head_forward_delta_max", 0.20)),
-        )
-        sev_side = self._inverse_severity(
-            side_face_ratio,
-            float(
-                self.posture_thresholds.get(
-                    "side_face_min_ratio", self.side_face_min_ratio
-                )
-            ),
-        )
-
-        score_head_raw = 0.58 * sev_neck_delta + 0.42 * sev_head_delta
-        score_hunch_raw = 0.70 * sev_torso_delta + 0.30 * max(
-            0.0, sev_neck_delta - 0.25
-        )
-        score_tilt_raw = 0.62 * sev_roll_delta + 0.38 * sev_side
-
-        if view_state == "side":
-            score_head_raw *= 0.55
-            score_hunch_raw *= 1.05
-            score_tilt_raw *= 1.20
-        elif view_state == "semi_side":
-            score_head_raw *= 0.78
-            score_hunch_raw *= 1.06
-            score_tilt_raw *= 1.10
-        else:
-            score_head_raw *= 1.08
-            score_tilt_raw *= 0.90
-
-        reliability = max(0.2, min(1.0, c_torso * c_neck))
-        score_head_raw *= reliability
-        score_hunch_raw *= reliability
-        score_tilt_raw *= max(0.25, min(1.0, c_shoulder))
-
-        alpha = max(0.0, min(1.0, self.class_score_alpha))
-        self.class_ema["head_down"] = (
-            alpha * score_head_raw + (1.0 - alpha) * self.class_ema["head_down"]
-        )
-        self.class_ema["hunchback"] = (
-            alpha * score_hunch_raw + (1.0 - alpha) * self.class_ema["hunchback"]
-        )
-        self.class_ema["tilt"] = (
-            alpha * score_tilt_raw + (1.0 - alpha) * self.class_ema["tilt"]
-        )
-
-        top_raw = max(score_head_raw, score_hunch_raw, score_tilt_raw)
-        top_ema = max(
-            self.class_ema["head_down"],
-            self.class_ema["hunchback"],
-            self.class_ema["tilt"],
-        )
-        best_class = "head_down"
-        if (
-            self.class_ema["hunchback"] >= self.class_ema["head_down"]
-            and self.class_ema["hunchback"] >= self.class_ema["tilt"]
-        ):
-            best_class = "hunchback"
-        elif (
-            self.class_ema["tilt"] >= self.class_ema["head_down"]
-            and self.class_ema["tilt"] >= self.class_ema["hunchback"]
-        ):
-            best_class = "tilt"
-
-        enter_reason = ""
-        exit_reason = ""
-        if self.posture_state == "normal":
-            if top_ema >= self.class_enter:
-                self.posture_state = "abnormal"
-                enter_reason = "ema"
-            elif top_raw >= self.class_instant_enter:
-                self.posture_state = "abnormal"
-                enter_reason = "instant"
-        else:
-            if top_ema <= self.class_exit and top_raw <= self.class_instant_exit:
-                self.posture_state = "normal"
-                exit_reason = "ema_and_raw"
-
-        posture = "normal" if self.posture_state == "normal" else best_class
-
-        return posture, {
-            "view_state": view_state,
-            "neck": float(neck_tilt),
-            "back": float(torso_tilt),
-            "shoulder_diff": float(shoulder_roll_ratio),
-            "head_forward_ratio": float(head_forward_ratio),
-            "side_face_ratio": float(side_face_ratio),
-            "baseline_ready": bool(self.baseline_ready),
-            "baseline_count": int(self.baseline_count),
-            "baseline_neck": float(base_neck),
-            "baseline_back": float(base_torso),
-            "baseline_roll": float(base_roll),
-            "baseline_head_forward": float(base_head),
-            "neck_delta": float(neck_delta),
-            "torso_delta": float(torso_delta),
-            "roll_delta": float(roll_delta),
-            "head_forward_delta": float(head_delta),
-            "score_head_raw": float(score_head_raw),
-            "score_hunch_raw": float(score_hunch_raw),
-            "score_tilt_raw": float(score_tilt_raw),
-            "score_head": float(self.class_ema["head_down"]),
-            "score_torso": float(self.class_ema["hunchback"]),
-            "score_tilt": float(self.class_ema["tilt"]),
-            "risk": float(top_raw),
-            "risk_ema": float(top_ema),
-            "enter_reason": enter_reason,
-            "exit_reason": exit_reason,
-            "posture_mode": "decoupled",
-        }
+        self.pending_posture_count += 1
+        if self.pending_posture_count >= self.stable_frame_count:
+            self.stable_posture_type = pose_type
+            self.pending_posture_type = None
+            self.pending_posture_count = 0
+        return self.stable_posture_type
 
     def _tilt_from_vertical(self, p1, p2):
         """
@@ -1031,6 +728,13 @@ class PoseDetector:
         dy = float(p2[1] - p1[1])
         return math.sqrt(dx * dx + dy * dy)
 
+    def _midpoint(self, p1, p2):
+        """计算两点中点并返回 `(x, y)`。"""
+        return (
+            (float(p1[0]) + float(p2[0])) / 2.0,
+            (float(p1[1]) + float(p2[1])) / 2.0,
+        )
+
     def _kp_conf(self, kp):
         """
         提取并裁剪关键点置信度。
@@ -1042,75 +746,14 @@ class PoseDetector:
             return max(0.0, min(1.0, float(kp[2])))
         return 0.0
 
-    def _severity(self, value, limit):
+    def _excess_ratio(self, value, threshold):
         """
-        计算“超过阈值”型严重度。
+        计算数值相对阈值的超限比例。
 
         返回：
-        - 0~1 严重度，未超阈值时为 0。
+        - 未超阈值时返回 `0.0`，否则返回超限比例。
         """
-        if limit <= 1e-6:
+        if threshold <= 1e-6:
             return 0.0
-        exceed = max(0.0, float(value) - float(limit))
-        return min(1.0, exceed / float(limit))
-
-    def _inverse_severity(self, value, minimum):
-        """
-        计算“低于最小值”型严重度。
-
-        返回：
-        - 0~1 严重度，满足最小值时为 0。
-        """
-        if minimum <= 1e-6:
-            return 0.0
-        gap = max(0.0, float(minimum) - float(value))
-        return min(1.0, gap / float(minimum))
-
-    def _dominant_abnormal(
-        self,
-        sev_torso,
-        sev_neck,
-        sev_head,
-        sev_roll,
-        sev_side,
-        neck_tilt,
-        torso_tilt,
-        head_margin,
-        torso_margin,
-        tilt_margin,
-        w_torso,
-        w_neck,
-        w_head,
-        w_roll,
-        w_side,
-    ):
-        """
-        根据各异常分值选出主导异常类型。
-
-        为什么这样做：
-        - 多特征可能同时异常，需要按分值与边际比确定对外输出类别。
-
-        返回：
-        - `head_down` / `hunchback` / `tilt` 之一。
-        """
-        head_score = max(sev_neck * w_neck, sev_head * w_head)
-        torso_score = sev_torso * w_torso
-        roll_score = max(sev_roll * w_roll, sev_side * w_side)
-        if (
-            roll_score >= head_score * tilt_margin
-            and roll_score >= torso_score * tilt_margin
-        ):
-            return "tilt"
-        if (
-            torso_score >= head_score * torso_margin
-            and torso_score >= roll_score * 1.02
-        ):
-            if torso_score >= roll_score:
-                return "hunchback"
-        if head_score >= torso_score * head_margin and head_score >= roll_score * 1.02:
-            return "head_down"
-        if torso_score >= head_score and torso_score >= roll_score:
-            return "hunchback"
-        if head_score >= torso_score and head_score >= roll_score:
-            return "head_down"
-        return "tilt"
+        exceed = max(0.0, float(value) - float(threshold))
+        return exceed / float(threshold)

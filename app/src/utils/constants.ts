@@ -11,13 +11,11 @@
 
 // 姿势类型枚举：对应视觉检测侧输出的姿势类别编码。
 export const POSTURE_TYPES = {
+  NO_PERSON: 'no_person',
   NORMAL: 'normal',
   HEAD_DOWN: 'head_down',
   HUNCHBACK: 'hunchback',
-  TILT: 'tilt',
-  NO_PERSON: 'no_person',
   UNKNOWN: 'unknown',
-  BAD: 'bad',
 } as const
 
 export type PostureType = (typeof POSTURE_TYPES)[keyof typeof POSTURE_TYPES]
@@ -46,17 +44,19 @@ export const SYSTEM_MODE_LABELS: Record<string, string> = {
 
 // 属性标识映射：ESP32/K230 <-> OneNET 物模型 identifier 统一入口。
 export const PROP_IDS = {
-  IS_POSTURE: 'isPosture',
+  POSTURE_TYPE: 'postureType',
   MONITORING_ENABLED: 'monitoringEnabled',
   CURRENT_MODE: 'currentMode',
   PERSON_PRESENT: 'personPresent',
   AMBIENT_LUX: 'ambientLux',
+  FILL_LIGHT_ON: 'fillLightOn',
   ALERT_MODE_MASK: 'alertModeMask',
   COOLDOWN_MS: 'cooldownMs',
   TIMER_DURATION_SEC: 'timerDurationSec',
   TIMER_RUNNING: 'timerRunning',
   CFG_VERSION: 'cfgVersion',
   SELF_TEST: 'selfTest',
+  IS_POSTURE: 'isPosture',
 } as const
 
 export type PropertyIdentifier = (typeof PROP_IDS)[keyof typeof PROP_IDS]

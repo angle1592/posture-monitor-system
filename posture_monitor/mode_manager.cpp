@@ -20,6 +20,7 @@
 static SystemMode _currentMode = MODE_POSTURE;
 static bool _modeChanged = false;
 static bool _rotationLocked = false;
+static bool _modeSwitchBlocked = false;
 static int _pendingDelta = 0;
 static ModeClickEvent _pendingClick = MODE_CLICK_NONE;
 
@@ -50,6 +51,7 @@ void mode_init() {
     _currentMode = MODE_POSTURE;
     _modeChanged = false;
     _rotationLocked = false;
+    _modeSwitchBlocked = false;
     _pendingDelta = 0;
     _pendingClick = MODE_CLICK_NONE;
 
@@ -89,6 +91,9 @@ void mode_update() {
         if (_rotationLocked) {
             // 锁定时不改模式，把旋转量缓存给上层做参数调节（如定时时长）。
             _pendingDelta += delta;
+        } else if (_modeSwitchBlocked) {
+            // 定时器结束未确认时禁止切模式，直接丢弃旋转输入。
+            _pendingDelta = 0;
         } else {
             // 未锁定时直接进行模式轮转：顺时针 +1，逆时针 -1（并做环形回绕）。
             int nextMode = (int)_currentMode;
@@ -173,6 +178,17 @@ void mode_setRotationLocked(bool locked) {
 
 bool mode_isRotationLocked() {
     return _rotationLocked;
+}
+
+void mode_setSwitchBlocked(bool blocked) {
+    _modeSwitchBlocked = blocked;
+    if (blocked) {
+        _pendingDelta = 0;
+    }
+}
+
+bool mode_isSwitchBlocked() {
+    return _modeSwitchBlocked;
 }
 
 int mode_takeRotationDelta() {

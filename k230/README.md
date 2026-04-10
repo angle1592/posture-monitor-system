@@ -6,10 +6,10 @@ K230-side vision module for real-time human posture detection. The program captu
 
 - Camera acquisition on K230
 - YOLOv8n-pose inference (`.kmodel`)
-- Posture analysis (`normal`, `head_down`, `hunchback`, `tilt`, `no_person`)
-- Current default posture path uses the `legacy` risk-scoring + EMA hysteresis strategy
-- The baseline adaptive calibration path is kept in code as an experimental branch and is not enabled by default
-- UART JSON output for downstream IoT firmware
+- Posture analysis based on 5 keypoints (`normal`, `head_down`, `hunchback`, `unknown`, `no_person`)
+- Uses shoulder midpoint and hip midpoint to form the torso line for hunchback detection
+- Uses the line from nose to shoulder midpoint to estimate head tilt for head-down detection
+- UART JSON output for downstream IoT firmware (`{"posture_type":"head_down"}`)
 - Structured runtime logging and fault-tolerant startup
 
 ## Repository Layout
@@ -51,14 +51,17 @@ Note: legacy copies may still use the `K230Vision` name, but the active subtree 
 
 ## UART Contract (to ESP32)
 
-Program outputs JSON lines over UART at `115200` baud, including fields such as:
+Program outputs JSON lines over UART at `115200` baud. The default payload contains only one field:
 
-- `frame_id`
 - `posture_type`
-- `is_abnormal`
-- `consecutive_abnormal`
-- `confidence`
-- `timestamp`
+
+Allowed values:
+
+- `normal`
+- `head_down`
+- `hunchback`
+- `unknown`
+- `no_person`
 
 ## Docs
 

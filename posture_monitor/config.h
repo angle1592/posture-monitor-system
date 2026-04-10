@@ -67,9 +67,19 @@
 #define EC11_S2_PIN         10  // 模块 S2（编码器 B 相）
 #define EC11_KEY_PIN        21  // 模块 KEY（按键）
 
-// --- HC-SR501 PIR 人体红外传感器 ---
-#define PIR_PIN             4   // 数字输入（GPIO4）
-#define PIR_WARMUP_MS       30000UL
+// --- 人体存在传感器（PIR / 对射式红外，可切换） ---
+#define PERSON_SENSOR_PIR         1
+#define PERSON_SENSOR_BEAM_BREAK  2
+
+#define PERSON_SENSOR_TYPE        PERSON_SENSOR_PIR
+#define PERSON_SENSOR_PIN         4       // 当前人体存在传感器输入引脚
+#define PERSON_SENSOR_ACTIVE_LEVEL LOW    // 对射式默认：LOW=挡住/有人
+#define PERSON_SENSOR_WARMUP_MS   30000UL // PIR 预热时间；对射式可设为 0
+#define PERSON_SENSOR_HOLD_MS     5000UL  // PIR 检测后保持时间；对射式建议设为 0
+
+// 旧宏名保留到主逻辑全面切换完成。
+#define PIR_PIN             PERSON_SENSOR_PIN
+#define PIR_WARMUP_MS       PERSON_SENSOR_WARMUP_MS
 
 // --- GY-302 BH1750 光照传感器 ---
 #define BH1750_SDA_PIN      OLED_SDA_PIN
@@ -77,6 +87,11 @@
 #define BH1750_I2C_ADDR     0x23
 #define BH1750_MEASUREMENT_DELAY_MS 180UL
 #define LIGHT_SENSOR_PIN    5   // 旧模拟光敏占位引脚，保留以兼容旧调试说明
+
+// --- 补光 LED ---
+#define ENABLE_FILL_LIGHT   1   // 0=禁用补光控制, 1=启用 GPIO 开关控制
+#define FILL_LIGHT_PIN      18  // 白光 LED 控制引脚（需串联限流电阻）
+#define FILL_LIGHT_LUX_THRESHOLD 20  // 低于该 lux 且 PIR=有人时打开补光
 
 // --- SYN-6288 语音合成模块 ---
 #define VOICE_TX_PIN        41  // 语音模块 TX（ESP32 TX -> SYN6288 RX）
@@ -170,7 +185,7 @@
 #define K230_UART_RECOVER_SILENCE_MS 12000  // 串口静默达到该阈值时尝试重建Serial1
 #define K230_UART_RECOVER_COOLDOWN_MS 8000  // 串口重建最小间隔，避免频繁抖动
 #define DISPLAY_UPDATE_INTERVAL_MS  500     // OLED 刷新间隔
-#define SENSOR_READ_INTERVAL_MS     1000    // 传感器读取间隔
+#define SENSOR_READ_INTERVAL_MS     200     // 传感器读取间隔，补光需更紧跟环境变化
 #define ALERT_CHECK_INTERVAL_MS     200     // 报警检查间隔
 
 // =============================================================================
@@ -197,6 +212,8 @@
 #define EC11_DEBOUNCE_MS            20
 
 #define BUZZER_PULSE_MS             120
+#define TIMER_DONE_REMINDER_INTERVAL_MS 3000
+#define TIMER_DONE_LED_PULSE_MS     700
 
 // 蜂鸣器旋律参数（模式切换提示音）
 #define BUZZER_MELODY_NOTE_MS       180     // 单个音符脉冲时长
@@ -215,17 +232,26 @@
 
 // MQTT 属性标识（与 shared/protocol/constants.h 保持同步）
 // 这些 key 是设备与云端的数据契约，重命名会直接导致属性读写失配。
-#define PROP_ID_IS_POSTURE          "isPosture"
+#define POSTURE_CODE_NO_PERSON      0
+#define POSTURE_CODE_NORMAL         1
+#define POSTURE_CODE_HEAD_DOWN      2
+#define POSTURE_CODE_HUNCHBACK      3
+
+#define PROP_ID_POSTURE_TYPE        "postureType"
 #define PROP_ID_MONITORING_ENABLED  "monitoringEnabled"
 #define PROP_ID_CURRENT_MODE        "currentMode"
 #define PROP_ID_PERSON_PRESENT      "personPresent"
 #define PROP_ID_AMBIENT_LUX         "ambientLux"
+#define PROP_ID_FILL_LIGHT_ON       "fillLightOn"
 #define PROP_ID_ALERT_MODE_MASK     "alertModeMask"
 #define PROP_ID_COOLDOWN_MS         "cooldownMs"
 #define PROP_ID_TIMER_DURATION_SEC  "timerDurationSec"
 #define PROP_ID_TIMER_RUNNING       "timerRunning"
 #define PROP_ID_CFG_VERSION         "cfgVersion"
 #define PROP_ID_SELF_TEST           "selfTest"
+
+// 旧云端字段，迁移期间保留到主逻辑切换完成。
+#define PROP_ID_IS_POSTURE          "isPosture"
 
 // =============================================================================
 // 模式定义

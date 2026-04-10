@@ -48,10 +48,10 @@
           <text class="update-time">{{ store.lastUpdateTimeText }}</text>
         </view>
         
-        <view class="posture-display" :class="store.state.isOnline ? (store.state.isPosture ? 'good' : 'bad') : 'offline'">
+        <view class="posture-display" :class="homePostureStateClass">
           <!-- 姿势可视化 - 科技感人形 -->
           <view class="posture-visual">
-            <view class="human-figure" :class="{ abnormal: !store.state.isPosture && store.state.isOnline }">
+            <view class="human-figure" :class="{ abnormal: homePostureVisualAbnormal }">
               <!-- 头部 -->
               <view class="figure-head">
                 <view class="head-inner"></view>
@@ -77,8 +77,8 @@
           <!-- 状态信息 -->
           <view class="posture-info">
             <view class="status-code">{{ store.state.isOnline ? 'SYS-001' : 'SYS-OFF' }}</view>
-            <text class="posture-status">{{ store.state.isOnline ? (store.state.isPosture ? '姿势正常' : '姿势异常') : '设备离线' }}</text>
-            <text class="posture-desc">{{ store.state.isOnline ? (store.state.isPosture ? '脊柱对齐良好，保持当前状态' : '检测到脊柱弯曲，请立即调整') : '等待设备连接...' }}</text>
+            <text class="posture-status">{{ homePostureStatusText }}</text>
+            <text class="posture-desc">{{ homePostureDescription }}</text>
             <view class="mode-tag">
               <text class="tag-dot"></text>
               <text>{{ store.modeText }}</text>
@@ -190,6 +190,32 @@ import StatCard from '@/components/ui/StatCard.vue'
 // 计算属性：将全局健康评分拆分为“良好/异常”占比，供进度条直接渲染。
 const goodPercent = computed(() => store.healthScore)
 const badPercent = computed(() => 100 - store.healthScore)
+const homePostureStateClass = computed(() => {
+  if (!store.state.isOnline) return 'offline'
+  if (store.state.postureType === 'normal') return 'good'
+  if (store.state.postureType === 'no_person') return 'idle'
+  return 'bad'
+})
+const homePostureVisualAbnormal = computed(() => {
+  if (!store.state.isOnline) return false
+  return store.state.postureType === 'head_down' || store.state.postureType === 'hunchback'
+})
+const homePostureStatusText = computed(() => {
+  if (!store.state.isOnline) return '设备离线'
+  if (store.state.postureType === 'normal') return '姿势正常'
+  if (store.state.postureType === 'no_person') return '当前无人'
+  if (store.state.postureType === 'head_down') return '检测到低头'
+  if (store.state.postureType === 'hunchback') return '检测到驼背'
+  return '姿态未知'
+})
+const homePostureDescription = computed(() => {
+  if (!store.state.isOnline) return '等待设备连接...'
+  if (store.state.postureType === 'normal') return '脊柱对齐良好，保持当前状态'
+  if (store.state.postureType === 'no_person') return '当前未检测到人体，等待新的监测数据'
+  if (store.state.postureType === 'head_down') return '检测到头部前倾，建议抬头放松颈部'
+  if (store.state.postureType === 'hunchback') return '检测到弓背，建议挺直腰背调整坐姿'
+  return '设备已在线，但姿态数据尚未稳定'
+})
 const scoreLevel = computed(() => {
   const s = store.healthScore
   // 评分阈值与视觉分档保持一致，避免同分值在不同页面出现风格漂移。
@@ -311,6 +337,10 @@ function goTo(url: string) {
     
     &.offline::before {
       background: linear-gradient(135deg, var(--state-offline) 0%, transparent 50%);
+    }
+
+    &.idle::before {
+      background: linear-gradient(135deg, #f59e0b 0%, transparent 50%);
     }
   }
   

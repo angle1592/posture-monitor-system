@@ -43,11 +43,11 @@
 void display_setConnectivity(bool wifiConnected, bool mqttConnected);
 void display_setSensorStatus(bool pirReady, bool personPresent, bool lightReady, int lightLux);
 // 更新定时器剩余时间和运行状态，供定时器页面显示。
-void display_setTimerStatus(int remainSec, int totalSec, int timerState);
+void display_setTimerStatus(int remainSec, int totalSec, int timerState, bool adjustMode);
 // 初始化 OLED 与绘图库（若启用）。
 void display_init();
 // 周期刷新显示内容：根据 mode 渲染对应页面。
-void display_update(int mode, const char* postureType, bool isAbnormal);
+void display_update(int mode, const char* postureLabel, bool fillLightOn);
 // 显示启动页（品牌/版本）。
 void display_showSplash();
 // 显示短消息窗口，覆盖主界面一段时间。

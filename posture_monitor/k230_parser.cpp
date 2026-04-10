@@ -5,8 +5,8 @@
  *
  * 实现要点：
  * - 同时支持“按行分隔解析”和“JSON 流状态机解析”两条路径，提升串口抗噪与恢复能力。
- * - 核心 JSON 解析不依赖 ArduinoJson，而是使用 strstr/strchr/strtol/strtod 做字段定位与严格校验。
- * - 对 posture_type、is_abnormal、consecutive_abnormal、confidence 逐项校验，拒绝脏数据写入。
+ * - 核心 JSON 解析不依赖 ArduinoJson，而是使用 strstr/strchr 做 posture_type 定位与白名单校验。
+ * - 以 posture_type 为主锚点，派生内部 isAbnormal / consecutiveAbnormal / confidence 兼容字段。
  * - 提供静默恢复机制：长时间无字节时重建 Serial1，避免链路偶发卡死。
  *
  * 内部状态变量含义（节选）：
@@ -40,10 +40,6 @@ static unsigned long _k230ParseAttemptCount = 0;
 static unsigned long _k230ParseSuccessCount = 0;
 static unsigned long _k230RejectMissingPostureType = 0;
 static unsigned long _k230RejectUnknownPostureType = 0;
-static unsigned long _k230RejectIsAbnormal = 0;
-static unsigned long _k230RejectConsecutive = 0;
-static unsigned long _k230RejectConfidence = 0;
-static unsigned long _k230RejectConfidenceRange = 0;
 static unsigned long _k230RejectControlChar = 0;
 static unsigned long _k230LastRawHintLogTime = 0;
 static uint8_t _k230RecentBytes[24];
@@ -66,10 +62,8 @@ static void _k230MarkFrameSynced();
 static const char* _k230SkipSpaces(const char* p);
 static const char* _k230FindKeyValueStart(const char* json, const char* keyPattern);
 static bool _k230IsKnownPostureType(const char* postureType);
-static bool _k230IsValueTerminator(char c);
-static bool _k230ParseIntStrict(const char* valueStart, int* outValue);
-static bool _k230ParseFloatStrict(const char* valueStart, float* outValue);
-static void _k230ApplyTextFrame(const char* postureType, bool isAbnormal, int consecutiveAbnormal, float confidence);
+static bool _k230IsAbnormalPostureType(const char* postureType);
+static void _k230ApplyTextFrame(const char* postureType);
 static bool _k230ParseTextLine(const char* line);
 static void _k230ResetJsonCapture();
 static void _k230FeedJsonStream(char c);
@@ -121,47 +115,24 @@ static const char* _k230FindKeyValueStart(const char* json, const char* keyPatte
 
 static bool _k230IsKnownPostureType(const char* postureType) {
     if (strcmp(postureType, "normal") == 0) return true;
-    if (strcmp(postureType, "bad") == 0) return true;
     if (strcmp(postureType, "no_person") == 0) return true;
     if (strcmp(postureType, "head_down") == 0) return true;
     if (strcmp(postureType, "hunchback") == 0) return true;
-    if (strcmp(postureType, "tilt") == 0) return true;
     if (strcmp(postureType, "unknown") == 0) return true;
     return false;
 }
 
-static bool _k230IsValueTerminator(char c) {
-    return c == ',' || c == '}' || c == '\0' || c == '\r' || c == '\n' || c == ' ' || c == '\t';
+static bool _k230IsAbnormalPostureType(const char* postureType) {
+    if (postureType == NULL) return false;
+    return strcmp(postureType, "head_down") == 0 || strcmp(postureType, "hunchback") == 0;
 }
 
-static bool _k230ParseIntStrict(const char* valueStart, int* outValue) {
-    if (valueStart == NULL || outValue == NULL) return false;
-    char* endPtr = NULL;
-    long parsed = strtol(valueStart, &endPtr, 10);
-    if (endPtr == valueStart) return false;
-    endPtr = (char*)_k230SkipSpaces(endPtr);
-    if (endPtr == NULL || !_k230IsValueTerminator(*endPtr)) return false;
-    *outValue = (int)parsed;
-    return true;
-}
-
-static bool _k230ParseFloatStrict(const char* valueStart, float* outValue) {
-    if (valueStart == NULL || outValue == NULL) return false;
-    char* endPtr = NULL;
-    double parsed = strtod(valueStart, &endPtr);
-    if (endPtr == valueStart) return false;
-    endPtr = (char*)_k230SkipSpaces(endPtr);
-    if (endPtr == NULL || !_k230IsValueTerminator(*endPtr)) return false;
-    *outValue = (float)parsed;
-    return true;
-}
-
-static void _k230ApplyTextFrame(const char* postureType, bool isAbnormal, int consecutiveAbnormal, float confidence) {
+static void _k230ApplyTextFrame(const char* postureType) {
     strncpy(_k230Data.postureType, postureType, sizeof(_k230Data.postureType) - 1);
     _k230Data.postureType[sizeof(_k230Data.postureType) - 1] = '\0';
-    _k230Data.isAbnormal = isAbnormal;
-    _k230Data.consecutiveAbnormal = consecutiveAbnormal;
-    _k230Data.confidence = confidence;
+    _k230Data.isAbnormal = _k230IsAbnormalPostureType(postureType);
+    _k230Data.consecutiveAbnormal = _k230Data.isAbnormal ? 1 : 0;
+    _k230Data.confidence = 0.0f;
     _k230Data.lastUpdateTime = millis();
     _k230Data.valid = true;
     _k230MarkFrameSynced();
@@ -179,27 +150,23 @@ static bool _k230ParseTextLine(const char* line) {
     }
 
     if (strstr(line, "no_person") != NULL) {
-        _k230ApplyTextFrame("no_person", false, 0, 0.0f);
+        _k230ApplyTextFrame("no_person");
         return true;
     }
     if (strstr(line, "head_down") != NULL) {
-        _k230ApplyTextFrame("head_down", true, 1, 0.60f);
+        _k230ApplyTextFrame("head_down");
         return true;
     }
     if (strstr(line, "hunchback") != NULL) {
-        _k230ApplyTextFrame("hunchback", true, 1, 0.60f);
+        _k230ApplyTextFrame("hunchback");
         return true;
     }
-    if (strstr(line, "tilt") != NULL) {
-        _k230ApplyTextFrame("tilt", true, 1, 0.60f);
-        return true;
-    }
-    if (strstr(line, "bad") != NULL) {
-        _k230ApplyTextFrame("bad", true, 1, 0.60f);
+    if (strstr(line, "unknown") != NULL) {
+        _k230ApplyTextFrame("unknown");
         return true;
     }
     if (strstr(line, "normal") != NULL) {
-        _k230ApplyTextFrame("normal", false, 0, 0.60f);
+        _k230ApplyTextFrame("normal");
         return true;
     }
 
@@ -288,12 +255,11 @@ static void _k230FeedJsonStream(char c) {
                 _k230PreferJsonStream = true;
                 _k230JsonLineCount++;
                 _k230ParsedSinceLastDelimiter = true;
-                LOGD("[K230] 帧 #%lu: %s (异常=%s, 连续=%d, 置信=%.2f)",
+                LOGD("[K230] 帧 #%lu: %s (异常=%s, 连续=%d)",
                      _k230FrameCount,
                      _k230Data.postureType,
                      _k230Data.isAbnormal ? "是" : "否",
-                     _k230Data.consecutiveAbnormal,
-                     _k230Data.confidence);
+                     _k230Data.consecutiveAbnormal);
             }
             _k230ResetJsonCapture();
         }
@@ -325,14 +291,11 @@ static bool _k230Parse(const char* json) {
     _k230ParseAttemptCount++;
 
     // 解析策略说明：
-    // 1) 先通过 key 锚点定位字段起点（strstr）。
-    // 2) 对数值字段使用 strtol/strtod 并验证终止符，避免把 "12abc" 当作合法值。
-    // 3) 全部字段通过后再一次性写入 _k230Data，避免半解析状态污染。
+    // 1) 先通过 key 锚点定位 posture_type 起点（strstr）。
+    // 2) 姿态类别通过白名单校验。
+    // 3) 解析成功后派生兼容字段并一次性写入 _k230Data。
 
     char postureType[sizeof(_k230Data.postureType)];
-    bool isAbnormal = false;
-    int consecutiveAbnormal = 0;
-    float confidence = 0.0f;
 
     // posture_type 是帧有效性的主锚点，缺失则整帧丢弃。
     const char* ptValue = _k230FindKeyValueStart(json, "\"posture_type\"");
@@ -355,54 +318,11 @@ static bool _k230Parse(const char* json) {
         return false;
     }
 
-    // --- 解析 is_abnormal ---
-    // 仅接受 true/false 字面量，拒绝 0/1 或其他变体，保持协议一致性。
-    const char* abValue = _k230FindKeyValueStart(json, "\"is_abnormal\"");
-    if (abValue == NULL) {
-        _k230RejectIsAbnormal++;
-        return false;
-    }
-    if (strncmp(abValue, "true", 4) == 0) {
-        isAbnormal = true;
-    } else if (strncmp(abValue, "false", 5) == 0) {
-        isAbnormal = false;
-    } else {
-        _k230RejectIsAbnormal++;
-        return false;
-    }
-
-    // --- 解析 consecutive_abnormal ---
-    // 连续异常帧数必须是严格整型，且后续字符必须为 JSON 分隔符。
-    const char* caValue = _k230FindKeyValueStart(json, "\"consecutive_abnormal\"");
-    if (!_k230ParseIntStrict(caValue, &consecutiveAbnormal)) {
-        _k230RejectConsecutive++;
-        return false;
-    }
-
-    // --- 解析 confidence ---
-    // 置信度按浮点读取，并额外校验范围 [0,1]。
-    const char* cfValue = _k230FindKeyValueStart(json, "\"confidence\"");
-    if (!_k230ParseFloatStrict(cfValue, &confidence)) {
-        _k230RejectConfidence++;
-        return false;
-    }
-
-    if (confidence < 0.0f || confidence > 1.0f) {
-        _k230RejectConfidenceRange++;
-        return false;
-    }
-
-    if (strcmp(postureType, "no_person") == 0) {
-        // 协议约定：无人时不视为异常，连续异常数清零。
-        isAbnormal = false;
-        consecutiveAbnormal = 0;
-    }
-
     strncpy(_k230Data.postureType, postureType, sizeof(_k230Data.postureType) - 1);
     _k230Data.postureType[sizeof(_k230Data.postureType) - 1] = '\0';
-    _k230Data.isAbnormal = isAbnormal;
-    _k230Data.consecutiveAbnormal = consecutiveAbnormal;
-    _k230Data.confidence = confidence;
+    _k230Data.isAbnormal = _k230IsAbnormalPostureType(postureType);
+    _k230Data.consecutiveAbnormal = _k230Data.isAbnormal ? 1 : 0;
+    _k230Data.confidence = 0.0f;
     
     // 更新时间戳和有效标志
     _k230Data.lastUpdateTime = millis();
@@ -518,15 +438,11 @@ static void _k230LogDiagnostics(unsigned long now) {
          _k230JsonLineCount,
          _k230NonJsonLineCount,
          _k230TruncatedLineCount);
-    LOGI("[K230] 解析统计: attempts=%lu, success=%lu, reject(pt=%lu, type=%lu, abnormal=%lu, consecutive=%lu, confidence=%lu, range=%lu, ctrl=%lu)",
+    LOGI("[K230] 解析统计: attempts=%lu, success=%lu, reject(pt=%lu, type=%lu, ctrl=%lu)",
          _k230ParseAttemptCount,
          _k230ParseSuccessCount,
          _k230RejectMissingPostureType,
          _k230RejectUnknownPostureType,
-         _k230RejectIsAbnormal,
-         _k230RejectConsecutive,
-         _k230RejectConfidence,
-         _k230RejectConfidenceRange,
          _k230RejectControlChar);
 
     if (_k230ParseAttemptCount == 0 && _k230RxByteCount >= 200 &&
@@ -580,10 +496,6 @@ void k230_init() {
     _k230ParseSuccessCount = 0;
     _k230RejectMissingPostureType = 0;
     _k230RejectUnknownPostureType = 0;
-    _k230RejectIsAbnormal = 0;
-    _k230RejectConsecutive = 0;
-    _k230RejectConfidence = 0;
-    _k230RejectConfidenceRange = 0;
     _k230RejectControlChar = 0;
     _k230LastRawHintLogTime = 0;
     _k230RecentByteCount = 0;
@@ -631,4 +543,14 @@ unsigned long k230_getSilenceMs() {
         return 0;
     }
     return millis() - _k230LastByteTime;
+}
+
+bool k230_setDetectionEnabled(bool enabled) {
+    char payload[64];
+    snprintf(payload, sizeof(payload),
+             "{\"cmd\":\"set_detection\",\"enabled\":%s}\n",
+             enabled ? "true" : "false");
+    size_t written = Serial1.print(payload);
+    LOGI("[K230 CTRL] set_detection=%s bytes=%u", enabled ? "ON" : "OFF", (unsigned int)written);
+    return written > 0;
 }

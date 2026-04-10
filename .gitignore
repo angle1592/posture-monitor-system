@@ -13,6 +13,7 @@ Thumbs.db
 .hbuilderx/
 .history/
 .sisyphus/
+.worktrees/
 
 # === Python ===
 __pycache__/

@@ -53,9 +53,9 @@
             <view class="detail-cell">
               <view class="cell-icon">🪑</view>
               <view class="cell-content">
-                <text class="cell-label">坐姿状态</text>
+                <text class="cell-label">当前姿态</text>
                 <view class="status-pill" :class="getPostureStatusClass">
-                  {{ store.state.isOnline ? (store.state.isPosture ? '正常' : '异常') : '离线' }}
+                  {{ store.state.isOnline ? store.postureText : '离线' }}
                 </view>
               </view>
             </view>
@@ -161,11 +161,30 @@ interface LogEntry {
 
 const logs = ref<LogEntry[]>([])
 
-// 姿势状态胶囊样式映射：在线且姿势正常/异常/离线三态。
+// 姿势状态胶囊样式映射：在线时区分正常/异常/无人/未知，离线单独处理。
 const getPostureStatusClass = computed(() => {
   if (!store.state.isOnline) return 'offline'
-  return store.state.isPosture ? 'normal' : 'danger'
+  if (store.state.postureType === 'normal') return 'normal'
+  if (store.state.postureType === 'no_person') return 'idle'
+  if (store.state.postureType === 'unknown') return 'unknown'
+  return 'danger'
 })
+
+function describePostureChange(postureType: string): { message: string; type: LogEntry['type'] } {
+  if (postureType === 'normal') {
+    return { message: '姿态已恢复正常', type: 'success' }
+  }
+  if (postureType === 'head_down') {
+    return { message: '检测到低头', type: 'warning' }
+  }
+  if (postureType === 'hunchback') {
+    return { message: '检测到驼背', type: 'warning' }
+  }
+  if (postureType === 'no_person') {
+    return { message: '当前无人', type: 'info' }
+  }
+  return { message: '姿态状态未知', type: 'error' }
+}
 
 const getLogTypeLabel = (type: string) => {
   const labels: Record<string, string> = {
@@ -200,14 +219,11 @@ function clearLogs() {
 
 // 监听姿势变化：只记录边沿变化，避免相同状态重复刷日志。
 watch(
-  () => store.state.isPosture,
+  () => store.state.postureType,
   (newVal, oldVal) => {
     if (newVal !== oldVal) {
-      if (newVal) {
-        addLog('姿势已恢复正常', 'success')
-      } else {
-        addLog('检测到不良姿势', 'warning')
-      }
+      const entry = describePostureChange(newVal)
+      addLog(entry.message, entry.type)
     }
   }
 )
@@ -373,14 +389,26 @@ onHide(() => {
               border: 1rpx solid rgba(0, 230, 118, 0.3);
             }
             
-            &.danger {
-              background: rgba(255, 82, 82, 0.15);
-              color: var(--state-danger);
-              border: 1rpx solid rgba(255, 82, 82, 0.3);
-            }
-            
-            &.online {
-              background: rgba(0, 230, 118, 0.15);
+             &.danger {
+               background: rgba(255, 82, 82, 0.15);
+               color: var(--state-danger);
+               border: 1rpx solid rgba(255, 82, 82, 0.3);
+             }
+
+             &.idle {
+               background: rgba(245, 158, 11, 0.15);
+               color: #f59e0b;
+               border: 1rpx solid rgba(245, 158, 11, 0.3);
+             }
+
+             &.unknown {
+               background: rgba(168, 85, 247, 0.15);
+               color: #c084fc;
+               border: 1rpx solid rgba(192, 132, 252, 0.3);
+             }
+             
+             &.online {
+               background: rgba(0, 230, 118, 0.15);
               color: var(--state-success);
               border: 1rpx solid rgba(0, 230, 118, 0.3);
             }

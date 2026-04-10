@@ -19,13 +19,8 @@
 // ============================================================
 // K230 UART JSON Field Names
 // ============================================================
-#define FIELD_FRAME_ID            "frame_id"
+// Active contract: the refactored K230 sends the minimal posture frame.
 #define FIELD_POSTURE_TYPE        "posture_type"
-#define FIELD_POSTURE_TYPE_FINE   "posture_type_fine"
-#define FIELD_IS_ABNORMAL         "is_abnormal"
-#define FIELD_CONSECUTIVE_ABNORMAL "consecutive_abnormal"
-#define FIELD_CONFIDENCE          "confidence"
-#define FIELD_TIMESTAMP           "timestamp"
 
 // ============================================================
 // Posture Type Enum Values
@@ -33,25 +28,35 @@
 #define POSTURE_NORMAL            "normal"
 #define POSTURE_HEAD_DOWN         "head_down"
 #define POSTURE_HUNCHBACK         "hunchback"
-#define POSTURE_TILT              "tilt"
 #define POSTURE_NO_PERSON         "no_person"
 #define POSTURE_UNKNOWN           "unknown"
-#define POSTURE_BAD               "bad"
+
+// ============================================================
+// Fused Posture Type Codes (ESP32 -> OneNET)
+// ============================================================
+#define POSTURE_CODE_NO_PERSON    0
+#define POSTURE_CODE_NORMAL       1
+#define POSTURE_CODE_HEAD_DOWN    2
+#define POSTURE_CODE_HUNCHBACK    3
 
 // ============================================================
 // MQTT Property Identifiers (ESP32 <-> OneNET)
 // ============================================================
-#define PROP_ID_IS_POSTURE        "isPosture"
+#define PROP_ID_POSTURE_TYPE      "postureType"
 #define PROP_ID_MONITORING_ENABLED "monitoringEnabled"
 #define PROP_ID_CURRENT_MODE      "currentMode"
 #define PROP_ID_PERSON_PRESENT    "personPresent"
 #define PROP_ID_AMBIENT_LUX       "ambientLux"
+#define PROP_ID_FILL_LIGHT_ON     "fillLightOn"
 #define PROP_ID_ALERT_MODE_MASK   "alertModeMask"
 #define PROP_ID_COOLDOWN_MS       "cooldownMs"
 #define PROP_ID_TIMER_DURATION_SEC "timerDurationSec"
 #define PROP_ID_TIMER_RUNNING     "timerRunning"
 #define PROP_ID_CFG_VERSION       "cfgVersion"
 #define PROP_ID_SELF_TEST         "selfTest"
+
+// Legacy property kept temporarily for old consumers during migration.
+#define PROP_ID_IS_POSTURE        "isPosture"
 
 // ============================================================
 // System Modes

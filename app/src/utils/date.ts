@@ -10,6 +10,16 @@ function pad2(value: number): string {
   return String(value).padStart(2, '0')
 }
 
+export function parseLocalDateStartMs(dateKey: string): number {
+  const match = dateKey.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!match) {
+    return new Date().setHours(0, 0, 0, 0)
+  }
+
+  const [, year, month, day] = match
+  return new Date(Number(year), Number(month) - 1, Number(day), 0, 0, 0, 0).getTime()
+}
+
 export function formatLocalDate(input: Date | number | string): string {
   // 接收 Date/时间戳/字符串三种输入，统一归一化为本地日期字符串。
   const date = input instanceof Date ? input : new Date(input)

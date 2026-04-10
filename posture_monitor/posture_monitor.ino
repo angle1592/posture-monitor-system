@@ -56,8 +56,28 @@ enum PublishDecisionReason {
     DECISION_LIVE_FRAME
 };
 
+enum FusedPostureType {
+    FUSED_POSTURE_NO_PERSON = 0,
+    FUSED_POSTURE_NORMAL = 1,
+    FUSED_POSTURE_HEAD_DOWN = 2,
+    FUSED_POSTURE_HUNCHBACK = 3
+};
+
 typedef struct {
-    bool isPostureOk;
+    FusedPostureType postureType;
+    bool personPresent;
+    bool postureKnown;
+    bool shouldAlert;
+    bool fillLightOn;
+    bool pirPresent;
+    bool pirReady;
+    int ambientLux;
+    bool k230TimedOut;
+    bool k230DataValid;
+} FusedPostureState;
+
+typedef struct {
+    FusedPostureState fused;
     PublishDecisionReason reason;
     unsigned long dataAgeMs;
 } PublishDecision;
@@ -72,6 +92,8 @@ static bool lastSyncedMonitoringEnabled = true;
 static int lastSyncedMode = MODE_POSTURE;
 static int lastSyncedTimerState = TIMER_IDLE;
 static unsigned long lastSyncedCfgVersion = 0;
+static int runtimeAppliedMode = MODE_POSTURE;
+static int lastAppliedK230DetectionEnabled = -1;
 
 // =============================================================================
 // 函数声明
@@ -88,14 +110,19 @@ void processSerialTestCommand(const char* line);
 
 // 定时任务
 void handlePeriodicPublish();
-PublishDecision evaluatePeriodicPublishDecision(const K230Data* data, unsigned long now, bool noPerson);
+PublishDecision evaluatePeriodicPublishDecision(const K230Data* data, unsigned long now);
 const char* publishDecisionReasonText(PublishDecisionReason reason);
+FusedPostureState evaluateFusedPostureState(const K230Data* data, unsigned long now);
+const char* fusedPostureLabel(FusedPostureType postureType);
+int fusedPostureCode(FusedPostureType postureType);
 void runActuatorSelfTest();
 void buildPropertyPayloads(char* statusParams, size_t statusLen, char* configParams, size_t configLen, char* sensorParams, size_t sensorLen, PublishDecision* decisionOut);
 void requestImmediatePublish();
 void syncImmediatePublishState();
 bool flushPendingPropertyPublish(unsigned long now);
-void syncTimerAdjustInputLock();
+bool isPosturePipelineActive();
+void syncModeRuntimeState();
+void syncK230DetectionState();
 
 bool jsonFindValueStart(const char* message, const char* key, const char** valueStart);
 bool jsonFindParamValueStart(const char* message, const char* key, const char** valueStart);
@@ -153,6 +180,8 @@ void setup() {
     lastSyncedMode = (int)mode_getCurrent();
     lastSyncedTimerState = (int)timer_getState();
     lastSyncedCfgVersion = timer_getConfig()->cfgVersion;
+    runtimeAppliedMode = (int)mode_getCurrent();
+    lastAppliedK230DetectionEnabled = -1;
     
     // 6. 连接 WiFi
     printBanner("WiFi 连接");
@@ -203,8 +232,6 @@ void loop() {
     k230_read();
     voice_update();
     handleSerialTestInput();
-
-    syncTimerAdjustInputLock();
     
     // 3. 更新模式（EC11 旋转检测）
     mode_update();
@@ -212,7 +239,10 @@ void loop() {
         requestImmediatePublish();
     }
     handleModeAndTimerInput();
+    syncModeRuntimeState();
     timer_tick(now);
+    syncModeRuntimeState();
+    syncK230DetectionState();
     syncImmediatePublishState();
     
     // 4. 定时读取传感器
@@ -230,27 +260,26 @@ void loop() {
     if (flushPendingPropertyPublish(now)) {
         lastPublishTime = now;
     }
+
+    const K230Data* data = k230_getData();
+    FusedPostureState fused = evaluateFusedPostureState(data, now);
+    sensors_setFillLight(fused.fillLightOn);
     
     // 6. 定时更新报警指示（WS2812 + 蜂鸣器）
     if (now - lastAlertTime >= ALERT_CHECK_INTERVAL_MS) {
         lastAlertTime = now;
 
-        const K230Data* data = k230_getData();
-        bool k230Ok = !k230_isTimeout(K230_TIMEOUT_MS);
-        bool noPerson = (strcmp(data->postureType, "no_person") == 0) || (sensors_isPirReady() && !sensors_isPersonPresent());
+        timer_alertPolicyTick(now, isPosturePipelineActive(), fused.shouldAlert, testForcePostureEnabled, testForceAbnormal);
 
-        timer_alertPolicyTick(now, data, monitoringEnabled, testForcePostureEnabled, testForceAbnormal, noPerson);
-
-        alerts_update(mqttOk, k230Ok, data->isAbnormal, noPerson);
+        alerts_update(mqttOk, fused.personPresent, fused.shouldAlert);
     }
     
     // 7. 定时刷新 OLED 显示
     if (now - lastDisplayTime >= DISPLAY_UPDATE_INTERVAL_MS) {
         lastDisplayTime = now;
 
-        const K230Data* data = k230_getData();
         display_setConnectivity(WiFi.status() == WL_CONNECTED, mqttOk);
-        display_setSensorStatus(sensors_isPirReady(), sensors_isPersonPresent(), sensors_isLightSensorReady(), sensors_getLightLevel());
+        display_setSensorStatus(fused.pirReady, fused.pirPresent, sensors_isLightSensorReady(), fused.ambientLux);
         
         // 读取定时器状态并映射到显示层状态机，确保界面与逻辑状态一致。
         TimerState tState = timer_getState();
@@ -258,15 +287,15 @@ void loop() {
         int tDuration = (int)timer_getConfig()->timerDurationSec;
         
         if (tState == TIMER_RUNNING) {
-            display_setTimerStatus(tRemain, tDuration, DISPLAY_TIMER_RUNNING);
+            display_setTimerStatus(tRemain, tDuration, DISPLAY_TIMER_RUNNING, timer_isAdjustMode());
         } else if (tState == TIMER_PAUSED) {
-            display_setTimerStatus(tRemain, tDuration, DISPLAY_TIMER_PAUSED);
-        } else if (tState == TIMER_DONE) {
-            display_setTimerStatus(tRemain, tDuration, DISPLAY_TIMER_DONE);
+            display_setTimerStatus(tRemain, tDuration, DISPLAY_TIMER_PAUSED, timer_isAdjustMode());
+        } else if (tState == TIMER_DONE_PENDING) {
+            display_setTimerStatus(tRemain, tDuration, DISPLAY_TIMER_DONE, timer_isAdjustMode());
         } else {
-            display_setTimerStatus(tDuration, tDuration, DISPLAY_TIMER_IDLE);
+            display_setTimerStatus(tRemain, tDuration, DISPLAY_TIMER_IDLE, timer_isAdjustMode());
         }
-        display_update(mode_getCurrent(), data->postureType, data->isAbnormal);
+        display_update(mode_getCurrent(), fusedPostureLabel(fused.postureType), fused.fillLightOn);
     }
     
     // 短暂延时，避免占用过多 CPU
@@ -496,9 +525,9 @@ void processSerialTestCommand(const char* line) {
              monitoringEnabled ? "on" : "off",
              timer_getConfig()->alertModeMask,
              timer_getConfig()->cooldownMs);
-        LOGI("[TEST] pirReady=%s, personPresent=%s, lightReady=%s, lux=%d",
-             sensors_isPirReady() ? "true" : "false",
-             sensors_isPersonPresent() ? "true" : "false",
+        LOGI("[TEST] presenceReady=%s, personPresent=%s, lightReady=%s, lux=%d",
+             sensors_isPresenceReady() ? "true" : "false",
+             sensors_isPresencePresent() ? "true" : "false",
              sensors_isLightSensorReady() ? "true" : "false",
              sensors_getLightLevel());
         return;
@@ -965,6 +994,16 @@ void handleModeAndTimerInput() {
     // - 长按：进入/退出调时模式（旋钮改时长）；
     // - 短按：在 开始/暂停/恢复 之间切换。
     if (mode_getCurrent() == MODE_TIMER) {
+        if (timer_isDonePending()) {
+            if (click == MODE_CLICK_SHORT) {
+                timer_ackDone();
+                display_showMessage("Timer cleared", NULL);
+                LOGI("[EC11] timer=DONE_ACK");
+                requestImmediatePublish();
+            }
+            return;
+        }
+
         if (click == MODE_CLICK_LONG) {
             bool newAdjustMode = !timer_isAdjustMode();
             timer_setAdjustMode(newAdjustMode);
@@ -976,7 +1015,11 @@ void handleModeAndTimerInput() {
         }
 
         TimerState tState = timer_getState();
-        if (tState == TIMER_IDLE || tState == TIMER_DONE) {
+        if (tState == TIMER_IDLE) {
+            if (timer_isAdjustMode()) {
+                timer_setAdjustMode(false);
+                mode_setRotationLocked(false);
+            }
             timer_start();
             display_showMessage("Timer started", NULL);
             LOGI("[EC11] timer=START total=%lus", timer_getConfig()->timerDurationSec);
@@ -987,6 +1030,10 @@ void handleModeAndTimerInput() {
             LOGI("[EC11] timer=PAUSE remain=%lus", timer_getRemainSec());
             requestImmediatePublish();
         } else if (tState == TIMER_PAUSED) {
+            if (timer_isAdjustMode()) {
+                timer_setAdjustMode(false);
+                mode_setRotationLocked(false);
+            }
             timer_resume();
             display_showMessage("Timer resumed", NULL);
             LOGI("[EC11] timer=RESUME remain=%lus", timer_getRemainSec());
@@ -1001,9 +1048,10 @@ void handleModeAndTimerInput() {
  */
 void refreshDisplayForTest() {
     const K230Data* data = k230_getData();
-    const char* posture = (data != NULL) ? data->postureType : NULL;
-    bool abnormal = (data != NULL) ? data->isAbnormal : false;
-    display_update(mode_getCurrent(), posture, abnormal);
+    FusedPostureState fused = evaluateFusedPostureState(data, millis());
+    display_setConnectivity(WiFi.status() == WL_CONNECTED, mqttClient.connected());
+    display_setSensorStatus(fused.pirReady, fused.pirPresent, sensors_isLightSensorReady(), fused.ambientLux);
+    display_update(mode_getCurrent(), fusedPostureLabel(fused.postureType), fused.fillLightOn);
 }
 
 
@@ -1107,7 +1155,9 @@ void handlePropertySet(const char* message) {
     // 否则旋钮可能仍被锁在旧语义下。
     if (jsonFindParamValueStart(message, PROP_ID_CURRENT_MODE, &p) && jsonParseULong(p, &numValue)) {
         if (numValue < MODE_COUNT) {
-            if (mode_setCurrent((SystemMode)numValue)) {
+            if (timer_isDonePending() && (int)numValue != (int)mode_getCurrent()) {
+                LOGW("  %s 被拒绝：定时器结束未确认", PROP_ID_CURRENT_MODE);
+            } else if (mode_setCurrent((SystemMode)numValue)) {
                 if (mode_getCurrent() != MODE_TIMER) {
                     timer_setAdjustMode(false);
                     mode_setRotationLocked(false);
@@ -1150,9 +1200,13 @@ void handlePropertySet(const char* message) {
 
     // 运行态控制：true 表示开始/继续，false 表示暂停。
     if (jsonFindParamValueStart(message, PROP_ID_TIMER_RUNNING, &p) && jsonParseBool(p, &boolValue)) {
-        timer_setTimerRunning(boolValue);
-        LOGI("  %s: %s", PROP_ID_TIMER_RUNNING, boolValue ? "true" : "false");
-        requestImmediatePublish();
+        if (mode_getCurrent() != MODE_TIMER || timer_isDonePending()) {
+            LOGW("  %s 被忽略：当前不允许远程控制定时器运行态", PROP_ID_TIMER_RUNNING);
+        } else {
+            timer_setTimerRunning(boolValue);
+            LOGI("  %s: %s", PROP_ID_TIMER_RUNNING, boolValue ? "true" : "false");
+            requestImmediatePublish();
+        }
     }
 
     // 自检触发字段只看“出现与否”，数值本身用于日志追踪来源。
@@ -1173,7 +1227,7 @@ void handlePropertySet(const char* message) {
  * @brief 处理云端下发的 property/get 请求
  * 
  * 预期收到的 JSON 格式：
- * {"id":"456","version":"1.0","params":["isPosture"]}
+ * {"id":"456","version":"1.0","params":["postureType"]}
  * 
  * 处理逻辑：
  * 1. 提取消息 id
@@ -1198,28 +1252,29 @@ void handlePropertyGet(const char* message) {
     // 步骤 2：构建当前属性值
     const K230Data* data = k230_getData();
     unsigned long now = millis();
-    bool noPerson = (strcmp(data->postureType, "no_person") == 0) || (sensors_isPirReady() && !sensors_isPersonPresent());
-    PublishDecision decision = evaluatePeriodicPublishDecision(data, now, noPerson);
+    PublishDecision decision = evaluatePeriodicPublishDecision(data, now);
     char params[512];
     sprintf(
         params,
         "{"
-        "\"%s\":{\"value\":%s},"
+        "\"%s\":{\"value\":%d},"
         "\"%s\":{\"value\":%s},"
         "\"%s\":{\"value\":%u},"
         "\"%s\":{\"value\":%s},"
         "\"%s\":{\"value\":%d},"
+        "\"%s\":{\"value\":%s},"
         "\"%s\":{\"value\":%u},"
         "\"%s\":{\"value\":%lu},"
         "\"%s\":{\"value\":%lu},"
         "\"%s\":{\"value\":%s},"
         "\"%s\":{\"value\":%lu}"
         "}",
-        PROP_ID_IS_POSTURE, decision.isPostureOk ? "true" : "false",
+        PROP_ID_POSTURE_TYPE, fusedPostureCode(decision.fused.postureType),
         PROP_ID_MONITORING_ENABLED, monitoringEnabled ? "true" : "false",
         PROP_ID_CURRENT_MODE, (unsigned int)mode_getCurrent(),
-        PROP_ID_PERSON_PRESENT, noPerson ? "false" : "true",
-        PROP_ID_AMBIENT_LUX, sensors_getLightLevel(),
+        PROP_ID_PERSON_PRESENT, decision.fused.personPresent ? "true" : "false",
+        PROP_ID_AMBIENT_LUX, decision.fused.ambientLux,
+        PROP_ID_FILL_LIGHT_ON, decision.fused.fillLightOn ? "true" : "false",
         PROP_ID_ALERT_MODE_MASK, timer_getConfig()->alertModeMask,
         PROP_ID_COOLDOWN_MS, timer_getConfig()->cooldownMs,
         PROP_ID_TIMER_DURATION_SEC, timer_getConfig()->timerDurationSec,
@@ -1239,58 +1294,138 @@ void handlePropertyGet(const char* message) {
 // 定时属性上报
 // =============================================================================
 
+FusedPostureState evaluateFusedPostureState(const K230Data* data, unsigned long now) {
+    (void)now;
+
+    FusedPostureState state = {
+        FUSED_POSTURE_NO_PERSON,
+        false,
+        false,
+        false,
+        false,
+        sensors_isPresencePresent(),
+        sensors_isPresenceReady(),
+        sensors_getLightLevel(),
+        k230_isTimeout(K230_TIMEOUT_MS),
+        data != NULL ? data->valid : false,
+    };
+
+    if (!isPosturePipelineActive()) {
+        return state;
+    }
+
+    const char* posture = (data != NULL) ? data->postureType : NULL;
+    bool k230AcceptsPosture = posture != NULL && (
+        strcmp(posture, "normal") == 0 ||
+        strcmp(posture, "head_down") == 0 ||
+        strcmp(posture, "hunchback") == 0
+    );
+
+    if (state.pirPresent && !state.k230TimedOut && state.k230DataValid && k230AcceptsPosture) {
+        state.personPresent = true;
+        state.postureKnown = true;
+
+        if (strcmp(posture, "normal") == 0) {
+            state.postureType = FUSED_POSTURE_NORMAL;
+        } else if (strcmp(posture, "head_down") == 0) {
+            state.postureType = FUSED_POSTURE_HEAD_DOWN;
+            state.shouldAlert = true;
+        } else {
+            state.postureType = FUSED_POSTURE_HUNCHBACK;
+            state.shouldAlert = true;
+        }
+    }
+
+    state.fillLightOn = state.pirPresent && state.ambientLux < FILL_LIGHT_LUX_THRESHOLD;
+    return state;
+}
+
+const char* fusedPostureLabel(FusedPostureType postureType) {
+    switch (postureType) {
+        case FUSED_POSTURE_NORMAL:
+            return "正常";
+        case FUSED_POSTURE_HEAD_DOWN:
+            return "低头";
+        case FUSED_POSTURE_HUNCHBACK:
+            return "驼背";
+        default:
+            return "无人";
+    }
+}
+
+int fusedPostureCode(FusedPostureType postureType) {
+    switch (postureType) {
+        case FUSED_POSTURE_NORMAL:
+            return POSTURE_CODE_NORMAL;
+        case FUSED_POSTURE_HEAD_DOWN:
+            return POSTURE_CODE_HEAD_DOWN;
+        case FUSED_POSTURE_HUNCHBACK:
+            return POSTURE_CODE_HUNCHBACK;
+        default:
+            return POSTURE_CODE_NO_PERSON;
+    }
+}
+
 /**
  * @brief 评估本轮周期上报应使用的坐姿结果及原因。
  * @details 把上报判定集中到单函数，保证日志、云端数据、异常兜底三者一致。
  * @param data 当前 K230 数据
  * @param now 当前毫秒时间戳
- * @param noPerson 当前是否可判定为无人
- * @return PublishDecision 包含最终布尔值、决策原因与数据时效信息
+ * @return PublishDecision 包含最终融合状态、决策原因与数据时效信息
  */
-PublishDecision evaluatePeriodicPublishDecision(const K230Data* data, unsigned long now, bool noPerson) {
-    PublishDecision decision = {true, DECISION_FALLBACK_TRUE, 0};
+PublishDecision evaluatePeriodicPublishDecision(const K230Data* data, unsigned long now) {
+    PublishDecision decision = {evaluateFusedPostureState(data, now), DECISION_LIVE_FRAME, 0};
 
     // 分支顺序有意设计为“先总开关，再启动态，再链路健康，再实时帧”：
     // 越靠前的是越高优先级的全局约束。
 
-    // 1) 检测功能被关闭：按产品策略上报 true，避免在停用期间制造异常告警。
-    if (!monitoringEnabled) {
+    // 1) 检测功能被关闭：主状态回到 no_person，但保留环境与补光派生字段。
+    if (!isPosturePipelineActive()) {
         decision.reason = DECISION_MONITOR_OFF;
-        return decision;
-    }
-
-    if (noPerson) {
-        decision.reason = DECISION_NO_PERSON;
-        decision.isPostureOk = true;
+        decision.fused.postureType = FUSED_POSTURE_NO_PERSON;
+        decision.fused.personPresent = false;
+        decision.fused.postureKnown = false;
+        decision.fused.shouldAlert = false;
         return decision;
     }
 
     // 2) 系统刚启动且还没拿到首帧：进入等待态，不立刻依据空数据判断异常。
     if (k230_getFrameCount() == 0) {
         decision.reason = DECISION_STARTUP_WAIT;
+        decision.fused.postureType = FUSED_POSTURE_NO_PERSON;
+        decision.fused.personPresent = false;
+        decision.fused.postureKnown = false;
+        decision.fused.shouldAlert = false;
         return decision;
     }
 
-    // 3) 当前帧无效或链路超时：先尝试“保鲜窗口”策略。
+    // 3) 当前帧无效或链路超时：姿态统一降级为 no_person。
     if (!data->valid || k230_isTimeout(K230_TIMEOUT_MS)) {
         if (data->valid) {
             decision.dataAgeMs = now - data->lastUpdateTime;
-            // 3.1) 在保鲜窗口内，沿用最近一次有效姿态，减少短抖动导致的云端翻转。
             if (decision.dataAgeMs <= K230_STALE_HOLD_MS) {
                 decision.reason = DECISION_STALE_HOLD;
-                decision.isPostureOk = !data->isAbnormal;
-                return decision;
+            } else {
+                decision.reason = DECISION_FALLBACK_TRUE;
             }
+        } else {
+            decision.reason = DECISION_FALLBACK_TRUE;
         }
-        // 3.2) 超出保鲜窗口或无可用历史帧：回退到安全默认 true。
-        decision.reason = DECISION_FALLBACK_TRUE;
-        decision.isPostureOk = true;
+        decision.fused.postureType = FUSED_POSTURE_NO_PERSON;
+        decision.fused.personPresent = false;
+        decision.fused.postureKnown = false;
+        decision.fused.shouldAlert = false;
         return decision;
     }
 
-    // 4) 链路与数据都健康：使用实时帧判定。
+    // 4) 链路与数据都健康：若融合结果为 no_person，则说明被 PIR 门控或视觉结果无效。
+    if (decision.fused.postureType == FUSED_POSTURE_NO_PERSON) {
+        decision.reason = DECISION_NO_PERSON;
+        return decision;
+    }
+
+    // 5) 链路与数据都健康且融合结果有效：使用实时姿态。
     decision.reason = DECISION_LIVE_FRAME;
-    decision.isPostureOk = !data->isAbnormal;
     return decision;
 }
 
@@ -1330,22 +1465,25 @@ void handlePeriodicPublish() {
         return;
     }
     
-    char statusParams[192];
+    char statusParams[224];
     char configParams[224];
-    char sensorParams[96];
+    char sensorParams[128];
     PublishDecision decision;
     buildPropertyPayloads(statusParams, sizeof(statusParams), configParams, sizeof(configParams), sensorParams, sizeof(sensorParams), &decision);
-    const K230Data* data = k230_getData();
     unsigned long now = millis();
 
     // 先打印“为何这样上报”的原因，便于现场从日志反推判定链路。
     switch (decision.reason) {
         case DECISION_MONITOR_OFF:
-            LOGD("[定时上报][%s] 检测已关闭，上报 isPosture=true", publishDecisionReasonText(decision.reason));
+            LOGD("[定时上报][%s] 检测已关闭，上报 postureType=%d personPresent=false",
+                 publishDecisionReasonText(decision.reason),
+                 fusedPostureCode(decision.fused.postureType));
             break;
         case DECISION_NO_PERSON:
-            LOGI("[定时上报][%s] 当前无人，上报 isPosture=true, personPresent=false",
-                 publishDecisionReasonText(decision.reason));
+            LOGI("[定时上报][%s] 融合结果为无人 postureType=%d personPresent=false fillLightOn=%s",
+                 publishDecisionReasonText(decision.reason),
+                 fusedPostureCode(decision.fused.postureType),
+                 decision.fused.fillLightOn ? "true" : "false");
             break;
         case DECISION_STARTUP_WAIT:
             LOGW("[定时上报][%s] 尚未收到K230有效首帧: now=%lums, grace=%dms, seenBytes=%s",
@@ -1355,22 +1493,24 @@ void handlePeriodicPublish() {
                  k230_hasSeenAnyByte() ? "true" : "false");
             break;
         case DECISION_STALE_HOLD:
-            LOGW("[定时上报][%s] K230 超时但在保鲜窗口(%lums<=%dms)，沿用最后状态 isPosture=%s",
+            LOGW("[定时上报][%s] K230 超时但在保鲜窗口(%lums<=%dms)，降级为 postureType=%d personPresent=false",
                  publishDecisionReasonText(decision.reason),
                  decision.dataAgeMs,
                  K230_STALE_HOLD_MS,
-                 decision.isPostureOk ? "true" : "false");
+                 fusedPostureCode(decision.fused.postureType));
             break;
         case DECISION_FALLBACK_TRUE:
-            LOGD("[定时上报][%s] K230 数据无效/超时且无可用保鲜状态，上报 isPosture=true",
-                 publishDecisionReasonText(decision.reason));
+            LOGD("[定时上报][%s] K230 数据无效/超时且无可用保鲜状态，上报 postureType=%d personPresent=false",
+                 publishDecisionReasonText(decision.reason),
+                 fusedPostureCode(decision.fused.postureType));
             break;
         case DECISION_LIVE_FRAME:
-            LOGI("[定时上报][%s] K230: %s, 异常=%s → isPosture=%s",
+            LOGI("[定时上报][%s] postureType=%d label=%s personPresent=%s fillLightOn=%s",
                  publishDecisionReasonText(decision.reason),
-                 data->postureType,
-                 data->isAbnormal ? "是" : "否",
-                 decision.isPostureOk ? "true" : "false");
+                 fusedPostureCode(decision.fused.postureType),
+                 fusedPostureLabel(decision.fused.postureType),
+                 decision.fused.personPresent ? "true" : "false",
+                 decision.fused.fillLightOn ? "true" : "false");
             break;
         default:
             LOGW("[定时上报][UNKNOWN] 未知决策原因，按安全默认值处理");
@@ -1388,23 +1528,22 @@ void handlePeriodicPublish() {
 void buildPropertyPayloads(char* statusParams, size_t statusLen, char* configParams, size_t configLen, char* sensorParams, size_t sensorLen, PublishDecision* decisionOut) {
     const K230Data* data = k230_getData();
     unsigned long now = millis();
-    bool noPerson = (strcmp(data->postureType, "no_person") == 0) || (sensors_isPirReady() && !sensors_isPersonPresent());
-    PublishDecision decision = evaluatePeriodicPublishDecision(data, now, noPerson);
+    PublishDecision decision = evaluatePeriodicPublishDecision(data, now);
 
     snprintf(
         statusParams,
         statusLen,
         "{"
-        "\"%s\":{\"value\":%s},"
+        "\"%s\":{\"value\":%d},"
         "\"%s\":{\"value\":%s},"
         "\"%s\":{\"value\":%u},"
         "\"%s\":{\"value\":%s},"
         "\"%s\":{\"value\":%s}"
         "}",
-        PROP_ID_IS_POSTURE, decision.isPostureOk ? "true" : "false",
+        PROP_ID_POSTURE_TYPE, fusedPostureCode(decision.fused.postureType),
         PROP_ID_MONITORING_ENABLED, monitoringEnabled ? "true" : "false",
         PROP_ID_CURRENT_MODE, (unsigned int)mode_getCurrent(),
-        PROP_ID_PERSON_PRESENT, noPerson ? "false" : "true",
+        PROP_ID_PERSON_PRESENT, decision.fused.personPresent ? "true" : "false",
         PROP_ID_TIMER_RUNNING, timer_getState() == TIMER_RUNNING ? "true" : "false"
     );
 
@@ -1427,9 +1566,11 @@ void buildPropertyPayloads(char* statusParams, size_t statusLen, char* configPar
         sensorParams,
         sensorLen,
         "{"
-        "\"%s\":{\"value\":%d}"
+        "\"%s\":{\"value\":%d},"
+        "\"%s\":{\"value\":%s}"
         "}",
-        PROP_ID_AMBIENT_LUX, sensors_getLightLevel()
+        PROP_ID_AMBIENT_LUX, decision.fused.ambientLux,
+        PROP_ID_FILL_LIGHT_ON, decision.fused.fillLightOn ? "true" : "false"
     );
 
     if (decisionOut != NULL) {
@@ -1466,6 +1607,52 @@ void syncImmediatePublishState() {
     }
 }
 
+bool isPosturePipelineActive() {
+    return mode_getCurrent() == MODE_POSTURE && monitoringEnabled;
+}
+
+void syncModeRuntimeState() {
+    mode_setSwitchBlocked(timer_isDonePending());
+
+    if (mode_getCurrent() == MODE_TIMER) {
+        bool shouldLock = timer_isAdjustMode();
+        if (mode_isRotationLocked() != shouldLock) {
+            mode_setRotationLocked(shouldLock);
+        }
+    } else {
+        if (timer_isAdjustMode()) {
+            timer_setAdjustMode(false);
+            requestImmediatePublish();
+        }
+        if (mode_isRotationLocked()) {
+            mode_setRotationLocked(false);
+        }
+    }
+
+    int currentMode = (int)mode_getCurrent();
+    if (runtimeAppliedMode == currentMode) {
+        return;
+    }
+
+    if (currentMode != MODE_TIMER) {
+        timer_setAdjustMode(false);
+        timer_reset();
+    }
+    alerts_off();
+    runtimeAppliedMode = currentMode;
+    requestImmediatePublish();
+}
+
+void syncK230DetectionState() {
+    int desired = isPosturePipelineActive() ? 1 : 0;
+    if (lastAppliedK230DetectionEnabled == desired) {
+        return;
+    }
+    if (k230_setDetectionEnabled(desired != 0)) {
+        lastAppliedK230DetectionEnabled = desired;
+    }
+}
+
 bool flushPendingPropertyPublish(unsigned long now) {
     if (!pendingImmediatePublish || !mqttClient.connected()) {
         return false;
@@ -1474,24 +1661,6 @@ bool flushPendingPropertyPublish(unsigned long now) {
     handlePeriodicPublish();
     lastPublishTime = now;
     return true;
-}
-
-void syncTimerAdjustInputLock() {
-    if (mode_getCurrent() == MODE_TIMER) {
-        bool shouldLock = timer_isAdjustMode();
-        if (mode_isRotationLocked() != shouldLock) {
-            mode_setRotationLocked(shouldLock);
-        }
-        return;
-    }
-
-    if (timer_isAdjustMode()) {
-        timer_setAdjustMode(false);
-        requestImmediatePublish();
-    }
-    if (mode_isRotationLocked()) {
-        mode_setRotationLocked(false);
-    }
 }
 
 // =============================================================================

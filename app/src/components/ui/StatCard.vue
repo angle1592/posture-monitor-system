@@ -1,11 +1,13 @@
 <template>
   <view class="stat-card-cyber" :class="[variantClass, { 'has-icon': icon }]">
-    <view v-if="icon" class="icon-wrap">
-      <text class="icon">{{ icon }}</text>
-    </view>
     <view class="content">
+      <view class="meta-row">
+        <view v-if="icon" class="icon-wrap">
+          <text class="icon">{{ icon }}</text>
+        </view>
+        <text class="label">{{ label }}</text>
+      </view>
       <text class="value" :class="valueClass">{{ value }}</text>
-      <text class="label">{{ label }}</text>
     </view>
     <view class="glow-border"></view>
     <slot />
@@ -90,8 +92,17 @@ const variantClass = computed(() => `variant-${props.variant}`)
   .content {
     position: relative;
     z-index: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 18rpx;
   }
-  
+
+  .meta-row {
+    display: flex;
+    align-items: center;
+    gap: 14rpx;
+  }
+
   .value {
     font-size: 48rpx;
     font-weight: 800;
@@ -125,9 +136,9 @@ const variantClass = computed(() => `variant-${props.variant}`)
   .label {
     font-size: 24rpx;
     color: var(--text-tertiary);
-    font-weight: 500;
-    text-transform: uppercase;
+    font-weight: 600;
     letter-spacing: 1rpx;
+    line-height: 1.2;
   }
   
   /* 变体样式 */

@@ -43,6 +43,8 @@ uint8_t alerts_getAlertMode();
 void alerts_setColor(uint8_t r, uint8_t g, uint8_t b);
 // 锁定或解锁指示灯自动刷新（锁定时保持指定颜色）。
 void alerts_lockIndicator(bool lock, uint8_t r, uint8_t g, uint8_t b);
+// 触发一个定长的指示灯脉冲，优先级高于普通状态灯。
+void alerts_triggerIndicatorPulse(unsigned long durationMs, uint8_t r, uint8_t g, uint8_t b);
 // 触发蜂鸣器脉冲一段时间（毫秒）。
 void alerts_triggerBuzzerPulse(unsigned long durationMs);
 // 简化接口：按给定时长蜂鸣一次。
@@ -50,7 +52,7 @@ void alerts_beep(int durationMs);
 // 查询当前是否允许语音告警。
 bool alerts_voiceEnabled();
 // 周期更新报警状态机（颜色映射、闪烁、蜂鸣器到时关闭）。
-void alerts_update(bool mqttConnected, bool k230Valid, bool isAbnormal, bool noPerson);
+void alerts_update(bool mqttConnected, bool personPresent, bool shouldAlert);
 // 关闭所有报警输出。
 void alerts_off();
 

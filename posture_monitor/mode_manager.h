@@ -49,6 +49,8 @@ const char* mode_getName();
 // 开关旋转锁：锁定后旋转不切模式，改为累积调节增量。
 void mode_setRotationLocked(bool locked);
 bool mode_isRotationLocked();
+void mode_setSwitchBlocked(bool blocked);
+bool mode_isSwitchBlocked();
 // 读取并清空累计旋转增量（一次性消费）。
 int mode_takeRotationDelta();
 // 读取并清空按键点击事件（短按/长按）。

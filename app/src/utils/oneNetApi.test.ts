@@ -87,3 +87,57 @@ describe('oneNetApi.setDeviceProperty', () => {
     expect(secondPayload?.params).toEqual({ currentMode: 1 })
   })
 })
+
+describe('oneNetApi mock mode', () => {
+  beforeEach(() => {
+    vi.resetModules()
+  })
+
+  it('returns mock realtime properties when VITE_USE_MOCK_HISTORY=true', async () => {
+    vi.stubEnv('VITE_USE_MOCK_HISTORY', 'true')
+    ;(globalThis as unknown as { uni: { request: ReturnType<typeof vi.fn>; setStorageSync: ReturnType<typeof vi.fn>; getStorageSync: ReturnType<typeof vi.fn> } }).uni = {
+      request: vi.fn(),
+      setStorageSync: vi.fn(),
+      getStorageSync: vi.fn(),
+    }
+
+    const { queryDeviceProperty } = await import('./oneNetApi')
+    const result = await queryDeviceProperty()
+
+    expect(result?.some(item => item.identifier === 'postureType')).toBe(true)
+    expect(result?.some(item => item.identifier === 'personPresent')).toBe(true)
+    expect(result?.some(item => item.identifier === 'fillLightOn')).toBe(true)
+  })
+
+  it('returns mock posture history when VITE_USE_MOCK_HISTORY=true', async () => {
+    vi.stubEnv('VITE_USE_MOCK_HISTORY', 'true')
+    ;(globalThis as unknown as { uni: { request: ReturnType<typeof vi.fn>; setStorageSync: ReturnType<typeof vi.fn>; getStorageSync: ReturnType<typeof vi.fn> } }).uni = {
+      request: vi.fn(),
+      setStorageSync: vi.fn(),
+      getStorageSync: vi.fn(),
+    }
+
+    const { queryPropertyHistory } = await import('./oneNetApi')
+    const history = await queryPropertyHistory('postureType', 7)
+
+    expect(history.length).toBeGreaterThan(20)
+    expect(history.some(point => point.value === 'normal')).toBe(true)
+    expect(history.some(point => point.value === 'head_down')).toBe(true)
+    expect(history.some(point => point.value === 'hunchback')).toBe(true)
+    expect(history.some(point => point.value === 'no_person')).toBe(true)
+  })
+
+  it('treats VITE_USE_MOCK_HISTORY with trailing spaces as enabled', async () => {
+    vi.stubEnv('VITE_USE_MOCK_HISTORY', 'true ')
+    ;(globalThis as unknown as { uni: { request: ReturnType<typeof vi.fn>; setStorageSync: ReturnType<typeof vi.fn>; getStorageSync: ReturnType<typeof vi.fn> } }).uni = {
+      request: vi.fn(),
+      setStorageSync: vi.fn(),
+      getStorageSync: vi.fn(),
+    }
+
+    const { queryPropertyHistory } = await import('./oneNetApi')
+    const history = await queryPropertyHistory('postureType', 7)
+
+    expect(history.length).toBeGreaterThan(20)
+  })
+})

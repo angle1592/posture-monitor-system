@@ -26,6 +26,7 @@ static int _displayLightLux = 2000;
 static int _displayTimerRemainSec = TIMER_DEFAULT_DURATION_SEC;
 static int _displayTimerTotalSec = TIMER_DEFAULT_DURATION_SEC;
 static int _displayTimerState = DISPLAY_TIMER_IDLE;
+static bool _displayTimerAdjustMode = false;
 static char _displayMsg1[22] = {0};
 static char _displayMsg2[22] = {0};
 static unsigned long _displayMsgUntil = 0;
@@ -54,10 +55,11 @@ void display_setSensorStatus(bool pirReady, bool personPresent, bool lightReady,
     _displayLightLux = lightLux;
 }
 
-void display_setTimerStatus(int remainSec, int totalSec, int timerState) {
+void display_setTimerStatus(int remainSec, int totalSec, int timerState, bool adjustMode) {
     _displayTimerRemainSec = remainSec;
     _displayTimerTotalSec = totalSec;
     _displayTimerState = timerState;
+    _displayTimerAdjustMode = adjustMode;
 }
 
 void display_init() {
@@ -73,7 +75,7 @@ void display_init() {
 #endif
 }
 
-void display_update(int mode, const char* postureType, bool isAbnormal) {
+void display_update(int mode, const char* postureLabel, bool fillLightOn) {
 #if ENABLE_OLED && DISPLAY_U8G2_AVAILABLE
     if (!_displayReady) {
         return;
@@ -91,26 +93,25 @@ void display_update(int mode, const char* postureType, bool isAbnormal) {
     }
 
     char line[32];
-    _u8g2.setFont(u8g2_font_6x10_tf);
-    snprintf(line, sizeof(line), "WiFi:%s MQTT:%s", _displayWifiConnected ? "OK" : "--", _displayMqttConnected ? "OK" : "--");
-    _u8g2.drawStr(0, 10, line);
 
     if (mode == MODE_POSTURE) {
-        // 姿态页：展示姿态类型 + 是否异常，供用户快速感知当前识别结果。
-        snprintf(line, sizeof(line), "PIR:%s Lux:%s", _displayPirReady ? (_displayPersonPresent ? "Y" : "N") : "--", _displayLightReady ? "OK" : "--");
-        _u8g2.drawStr(0, 22, line);
+        _u8g2.setFont(u8g2_font_wqy12_t_gb2312);
+        _u8g2.drawUTF8(0, 11, "坐姿监测");
+        _u8g2.drawHLine(0, 15, 128);
+        _u8g2.drawUTF8(0, 31, "当前姿态:");
+        _u8g2.drawUTF8(72, 31, (postureLabel != NULL && postureLabel[0] != '\0') ? postureLabel : "无人");
 
-        _u8g2.setFont(u8g2_font_6x13_tf);
-        if (postureType == NULL || postureType[0] == '\0') {
-            _u8g2.drawStr(0, 42, "Posture: unknown");
-        } else {
-            snprintf(line, sizeof(line), "Posture:%s", postureType);
-            _u8g2.drawStr(0, 42, line);
-        }
-        snprintf(line, sizeof(line), "State:%s Lx:%d", isAbnormal ? "abn" : "ok", _displayLightLux);
-        _u8g2.drawStr(0, 60, line);
+        _u8g2.setFont(u8g2_font_wqy12_t_gb2312);
+        snprintf(line, sizeof(line), "人体:%s", (_displayPirReady && _displayPersonPresent) ? "有人" : "无人");
+        _u8g2.drawUTF8(0, 47, line);
+        snprintf(line, sizeof(line), "补光:%s", fillLightOn ? "开" : "关");
+        _u8g2.drawUTF8(68, 47, line);
+        snprintf(line, sizeof(line), "光照:%d lx", _displayLightLux);
+        _u8g2.drawUTF8(0, 62, line);
     } else if (mode == MODE_CLOCK) {
-        // 时钟页：优先显示本地时间；SNTP 未同步完成时显示提示文案。
+        _u8g2.setFont(u8g2_font_wqy12_t_gb2312);
+        _u8g2.drawUTF8(0, 11, "时钟");
+        _u8g2.drawHLine(0, 15, 128);
         struct tm t;
         if (getLocalTime(&t, 10)) {
             char hhmmss[16];
@@ -118,27 +119,32 @@ void display_update(int mode, const char* postureType, bool isAbnormal) {
             snprintf(hhmmss, sizeof(hhmmss), "%02d:%02d:%02d", t.tm_hour, t.tm_min, t.tm_sec);
             snprintf(ymd, sizeof(ymd), "%04d-%02d-%02d", t.tm_year + 1900, t.tm_mon + 1, t.tm_mday);
             _u8g2.setFont(u8g2_font_logisoso24_tn);
-            _u8g2.drawStr(0, 40, hhmmss);
+            _u8g2.drawStr(0, 46, hhmmss);
             _u8g2.setFont(u8g2_font_6x10_tf);
             _u8g2.drawStr(0, 60, ymd);
         } else {
+            _u8g2.setFont(u8g2_font_6x10_tf);
             _u8g2.drawStr(0, 34, "Syncing time...");
         }
     } else {
-        // 非 posture/clock 统一落到 timer 渲染，和主状态机 mode 枚举保持同口径。
+        _u8g2.setFont(u8g2_font_wqy12_t_gb2312);
+        _u8g2.drawUTF8(0, 11, "定时器");
+        _u8g2.drawHLine(0, 15, 128);
         char mmss[12];
         _displayFmtMMSS(_displayTimerRemainSec, mmss, sizeof(mmss));
         _u8g2.setFont(u8g2_font_logisoso24_tn);
-        _u8g2.drawStr(0, 40, mmss);
-        _u8g2.setFont(u8g2_font_6x10_tf);
-        if (_displayTimerState == DISPLAY_TIMER_RUNNING) {
-            _u8g2.drawStr(0, 60, "Timer: running");
+        _u8g2.drawStr(0, 46, mmss);
+        _u8g2.setFont(u8g2_font_wqy12_t_gb2312);
+        if (_displayTimerAdjustMode) {
+            _u8g2.drawUTF8(0, 62, "调时中");
+        } else if (_displayTimerState == DISPLAY_TIMER_RUNNING) {
+            _u8g2.drawUTF8(0, 62, "倒计时中");
         } else if (_displayTimerState == DISPLAY_TIMER_PAUSED) {
-            _u8g2.drawStr(0, 60, "Timer: paused");
+            _u8g2.drawUTF8(0, 62, "已暂停");
         } else if (_displayTimerState == DISPLAY_TIMER_DONE) {
-            _u8g2.drawStr(0, 60, "Timer: done");
+            _u8g2.drawUTF8(0, 62, "时间到了");
         } else {
-            _u8g2.drawStr(0, 60, "Timer: idle");
+            _u8g2.drawUTF8(0, 62, "准备开始");
         }
     }
 
@@ -146,8 +152,8 @@ void display_update(int mode, const char* postureType, bool isAbnormal) {
 #else
     // OLED 关闭时显式吞掉参数，避免未使用告警并保持调用侧接口一致。
     (void)mode;
-    (void)postureType;
-    (void)isAbnormal;
+    (void)postureLabel;
+    (void)fillLightOn;
 #endif
 }
 

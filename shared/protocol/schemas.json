@@ -7,8 +7,14 @@
   "definitions": {
     "PostureType": {
       "type": "string",
-      "enum": ["normal", "head_down", "hunchback", "tilt", "no_person", "unknown", "bad"],
+      "enum": ["normal", "head_down", "hunchback", "no_person", "unknown"],
       "description": "Posture classification labels shared between K230 and ESP32"
+    },
+
+    "FusedPostureTypeCode": {
+      "type": "integer",
+      "enum": [0, 1, 2, 3],
+      "description": "0=no_person, 1=normal, 2=head_down, 3=hunchback"
     },
 
     "SystemMode": {
@@ -32,18 +38,10 @@
 
     "K230UartFrame": {
       "type": "object",
-      "description": "JSON frame sent from K230 to ESP32 via UART at 115200 baud",
-      "required": ["frame_id", "posture_type", "is_abnormal", "confidence"],
+      "description": "Minimal JSON frame sent from K230 to ESP32 via UART",
+      "required": ["posture_type"],
       "properties": {
-        "frame_id":               { "type": "integer", "description": "Monotonically increasing frame counter" },
-        "posture_type":           { "$ref": "#/definitions/PostureType" },
-        "posture_type_fine":      { "type": "string", "description": "Fine-grained posture label (head_down/hunchback/tilt)" },
-        "is_abnormal":            { "type": "boolean" },
-        "consecutive_abnormal":   { "type": "integer", "minimum": 0 },
-        "confidence":             { "type": "number", "minimum": 0, "maximum": 1 },
-        "timestamp":              { "type": "integer", "description": "Unix timestamp (seconds)" },
-        "person_debug":           { "type": "object", "description": "Optional debug info about person detection" },
-        "posture_debug":          { "type": "object", "description": "Optional debug info about posture analysis" }
+        "posture_type":           { "$ref": "#/definitions/PostureType" }
       }
     },
 
@@ -51,17 +49,19 @@
       "type": "object",
       "description": "Properties reported by ESP32 to OneNET via MQTT",
       "properties": {
-        "isPosture":          { "type": "boolean", "description": "true=normal posture, false=abnormal" },
+        "postureType":        { "$ref": "#/definitions/FusedPostureTypeCode" },
         "monitoringEnabled":  { "type": "boolean" },
         "currentMode":        { "$ref": "#/definitions/SystemMode" },
         "personPresent":      { "type": "boolean", "description": "true=person present by PIR/K230 absence gating" },
         "ambientLux":         { "type": "integer", "description": "Ambient light level from BH1750 in lux" },
+        "fillLightOn":        { "type": "boolean", "description": "true=fill light GPIO is on" },
         "alertModeMask":      { "$ref": "#/definitions/AlertModeMask" },
         "cooldownMs":         { "type": "integer", "description": "Alert cooldown in milliseconds" },
         "timerDurationSec":   { "type": "integer", "description": "Timer duration in seconds" },
         "timerRunning":       { "type": "boolean" },
         "cfgVersion":         { "type": "integer" },
-        "selfTest":           { "type": "boolean" }
+        "selfTest":           { "type": "boolean" },
+        "isPosture":          { "type": "boolean", "description": "Legacy boolean posture field kept only for migration" }
       }
     }
   }

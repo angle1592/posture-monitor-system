@@ -2,7 +2,7 @@
 ## 1. 系统总览
 ### 1.1 系统简介
 坐姿监测系统是一个基于物联网的智能坐姿检测与提醒方案，旨在帮助用户（尤其是长时间伏案工作的学生和办公人群）保持正确坐姿，预防因不良坐姿导致的颈椎病、腰椎病等健康问题。
-系统通过 K230 视觉模块实时采集用户坐姿图像，利用 YOLOv8n-pose 深度学习模型进行人体姿态检测，分析坐姿是否正常（如低头、驼背、侧倾等异常姿势）。检测结果通过 UART 串口发送给 ESP32 主控模块，ESP32 将状态上报到 OneNET 云平台，同时驱动本地报警设备（LED、蜂鸣器、语音模块）进行提醒。用户可通过手机 App 远程查看坐姿状态、历史数据，并对设备进行远程控制。
+系统通过 K230 视觉模块实时采集用户坐姿图像，利用 YOLOv8n-pose 深度学习模型进行人体姿态检测，并基于鼻子、双肩、双髋 5 个关键点的几何关系识别正常、低头、驼背等状态。检测结果通过 UART 串口发送给 ESP32 主控模块，ESP32 将状态上报到 OneNET 云平台，同时驱动本地报警设备（LED、蜂鸣器、语音模块）进行提醒。用户可通过手机 App 远程查看坐姿状态、历史数据，并对设备进行远程控制。
 **核心价值**：
 - 实时监测：约 200ms 一帧的检测频率，及时发现问题坐姿
 - 智能提醒：多种提醒方式（灯光、声音、语音），避免重复打扰
@@ -71,14 +71,14 @@
 | ESP32 主控模块 | `esp32/` | 接收 K230 数据、MQTT 云端通信、本地报警、用户交互 | Arduino C++, PubSubClient, U8g2 |
 | 手机 App | `app/` | 远程监控、历史数据查看、设备参数配置 | UniApp, Vue3, TypeScript |
 
-当前 K230 视觉端默认采用 `legacy` 姿态判定路径，即基于绝对几何特征、风险评分、EMA 平滑和迟滞阈值的稳定化方案。代码中保留了基于个人基线增量的 `decoupled` 实验分支，但现阶段项目默认配置未启用该机制，因此当前交付口径不将“基线自适应校准”作为在线运行特性。
+当前 K230 视觉端采用 5 个关键点的几何规则判定路径。算法以图像坐标系为参考，使用双肩中点与双髋中点连线相对竖直方向的夹角识别驼背，使用鼻子与双肩中点连线相对竖直方向的夹角识别低头；关键点不齐全时输出 `unknown`。
 
 ### 1.3.1 感知层组成
 本项目中的感知层并不等同于单一的 K230 视觉端，而是由视觉感知、人体存在感知和环境感知共同组成，为后续控制、提醒与云端上报提供原始状态输入。
 
 | 感知模块 | 主要实现位置 | 作用 |
 |----------|--------------|------|
-| 视觉感知模块 | `refactored/k230/` | 通过摄像头采集用户图像，结合 YOLOv8n-pose 完成人体关键点检测、姿态识别与坐姿分类，输出 `normal`、`head_down`、`hunchback`、`tilt`、`no_person` 等结果。 |
+| 视觉感知模块 | `refactored/k230/` | 通过摄像头采集用户图像，结合 YOLOv8n-pose 完成人体关键点检测、姿态识别与坐姿分类，输出 `normal`、`head_down`、`hunchback`、`unknown`、`no_person` 等结果。 |
 | 人体存在感知模块 | `refactored/posture_monitor/sensors.h` / `sensors.cpp` | 基于 HC-SR501 PIR 红外传感器检测用户是否在位，用于辅助区分“无人”与“异常坐姿”场景，并在无人时抑制不必要的提醒。 |
 | 环境光感知模块 | `refactored/posture_monitor/sensors.h` / `sensors.cpp` | 基于 GY-302 BH1750 光照传感器采集环境照度（lux），为设备状态显示、属性上报和后续环境联动功能提供输入。 |
 
@@ -120,7 +120,7 @@ K230 摄像头帧
    v
 K230 JSON 帧（UART, 115200）
    |
-   | frame_id / posture_type / is_abnormal / confidence / ...
+   | posture_type
    v
 ESP32 串口解析层（k230_parser）
    |
@@ -137,16 +137,10 @@ OneNET 物模型
 手机 App（store + oneNetApi）
 ```
 ### 2.4 UART 负载格式（K230 -> ESP32）
-K230 在主循环里按检测间隔（`detection_interval=120ms`）发送 JSON 行文本，核心字段如下：
+K230 在主循环里按检测间隔（`detection_interval=120ms`）发送 JSON 行文本，默认核心字段如下：
 | 字段 | 类型 | 语义 |
 |------|------|------|
-| `frame_id` | integer | 帧递增序号 |
-| `posture_type` | string | 粗粒度分类（`normal`/`bad`/`no_person`） |
-| `posture_type_fine` | string | 细粒度分类（`head_down`/`hunchback`/`tilt`/`unknown`） |
-| `is_abnormal` | bool | 当前帧是否异常 |
-| `consecutive_abnormal` | integer | 连续异常帧累计 |
-| `confidence` | number | 识别置信度 |
-| `timestamp` | integer | 发送时刻（ms） |
+| `posture_type` | string | 最终姿态类别（`normal`/`head_down`/`hunchback`/`unknown`/`no_person`） |
 ### 2.5 MQTT 主题与方向
 | 方向 | 主题 | 用途 |
 |------|------|------|
@@ -342,14 +336,14 @@ ESP32 使用两个独立状态机：
 ### 4.1 角色定位
 K230 是系统的“感知端”，输出的是“结构化姿态信息”，而不是原始图像。它关注两件事：
 1. 人在不在（`no_person` 过滤）
-2. 姿势好不好（`normal` / `bad` + 细粒度标签）
+2. 当前稳定姿态类别（`normal` / `head_down` / `hunchback` / `unknown`）
 ### 4.2 主循环数据流
 ```
 [摄像头采样]
     -> [YOLOv8n-pose 推理]
     -> [人体存在过滤 PERSON_FILTER]
     -> [姿态判定 POSTURE_THRESHOLDS]
-    -> [连续异常计数 consecutive_abnormal]
+    -> [类别稳定输出 stable_frame_count]
     -> [UART JSON 输出到 ESP32]
 ```
 ### 4.3 核心配置（config.py）
@@ -360,37 +354,39 @@ K230 是系统的“感知端”，输出的是“结构化姿态信息”，而
 | `camera_framesize` | `QVGA` | 采集分辨率 |
 | `camera_pixformat` | `RGBP888` | AI 输入像素格式 |
 | `detection_interval` | `120` ms | 检测循环间隔 |
-| `abnormal_threshold` | `2` | 连续异常阈值（K230 侧） |
 | `uart_id` | `1` | 串口编号 |
 | `uart_baudrate` | `115200` | 串口波特率 |
 | `uart_tx_pin/uart_rx_pin` | `3/4` | 串口引脚 |
 | `no_person_reset_frames` | `5` | 连续无人后重置异常状态 |
+| `stable_frame_count` | `1` | 同一类别连续出现多少帧后才确认输出 |
 ### 4.4 姿态标签映射策略
-在 `main.py` 中，细粒度姿态会映射到粗粒度输出：
-- `normal` -> `posture_type=normal`, `is_abnormal=false`
-- `head_down/hunchback/tilt/unknown` -> `posture_type=bad`, `is_abnormal=true`
-- 未检测到人 -> `posture_type=no_person`, `is_abnormal=false`
+在 `main.py` 中，K230 直接输出最终姿态类别：
+- `normal`
+- `head_down`
+- `hunchback`
+- `unknown`
+- `no_person`
+
 这样做的原因：
-- ESP32 和云端策略只需要稳定的二分类（正常/异常）即可驱动提醒。
-- App 若要解释异常类型，可读取 `posture_type_fine`。
+- UART 协议更小，K230 只负责识别类别。
+- ESP32 侧可以基于 `posture_type` 自行决定提醒与连续计数策略。
 ### 4.5 性能与稳态策略
 K230 代码内置了多层稳态设计：
 - 滑动窗口统计识别时延（平均值 + P95）。
 - `no_person_reset_frames` 避免用户离开后回到画面立即触发误报。
+- `stable_frame_count` 控制同一姿态类别的连续确认帧数。
 - 可配置 `gc_collect_interval_frames` 限制内存碎片累积。
 - 检测器未初始化时提供 mock 输出，保证联调链路不中断。
 ### 4.6 K230 输出契约（与 shared/protocol 一致）
-`schemas.json` 中 `K230UartFrame` 要求字段：
-- `frame_id`
+当前 K230 默认 UART 契约为：
 - `posture_type`
-- `is_abnormal`
-- `confidence`
-可选字段：
-- `posture_type_fine`
-- `consecutive_abnormal`
-- `timestamp`
-- `person_debug`
-- `posture_debug`
+
+推荐取值：
+- `normal`
+- `head_down`
+- `hunchback`
+- `unknown`
+- `no_person`
 ---
 ## 5. 手机 App 架构
 ### 5.1 App 的系统定位
@@ -450,7 +446,7 @@ App 不只看一个接口：
 协议层目标是避免“同一字段三端不同名”导致的隐性故障。
 ### 6.2 统一枚举与字段
 #### 姿态枚举
-`normal`, `head_down`, `hunchback`, `tilt`, `no_person`, `unknown`, `bad`
+`normal`, `head_down`, `hunchback`, `unknown`, `no_person`
 #### 模式枚举
 - `0 = posture`
 - `1 = clock`

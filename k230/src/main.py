@@ -11,7 +11,7 @@ K230视觉模块主程序 - 坐姿检测系统
     K230 Vision Module (本程序)
         ↓ 摄像头采集 (QVGA 320x240)
         ↓ YOLOv8n-pose推理 (NPU加速)
-        ↓ 姿态分析 (正常/低头/驼背/侧倾)
+        ↓ 姿态分析 (正常/低头/驼背/未知)
         ↓ UART发送 (JSON格式)
 
     ESP32 Main Controller
@@ -45,12 +45,7 @@ K230视觉模块主程序 - 坐姿检测系统
 
 JSON输出格式：
     {
-        "frame_id": 123,                    // 帧序号
-        "posture_type": "normal",          // 姿态类型: normal/head_down/hunchback/tilt/no_person
-        "is_abnormal": false,               // 是否异常姿势
-        "consecutive_abnormal": 0,          // 连续异常帧数
-        "confidence": 0.95,                  // 检测置信度
-        "timestamp": 1698765432              // 时间戳（毫秒）
+        "posture_type": "normal"          // 姿态类型: normal/head_down/hunchback/unknown/no_person
     }
 
 日期: 2026-02
@@ -85,7 +80,7 @@ class SittingPostureMonitor:
     主要功能：
         1. 初始化K230摄像头和AI姿态检测器
         2. 采集图像并进行YOLOv8n-pose姿态检测
-        3. 分析坐姿状态（正常/低头/驼背/侧倾）
+        3. 分析坐姿状态（正常/低头/驼背/未知）
         4. 通过UART与ESP32通信，发送检测结果
         5. 连续监测并统计异常坐姿
 
@@ -95,7 +90,6 @@ class SittingPostureMonitor:
         - uart: 与 ESP32 通信的串口对象
         - frame_count: 已处理帧总数
         - recog_latency_ms: 推理时延滑动窗口
-        - abnormal_delay_ms: 从异常出现到触发阈值的时延窗口
 
     使用示例：
         >>> monitor = SittingPostureMonitor()
@@ -128,15 +122,23 @@ class SittingPostureMonitor:
 
         # 配置参数
         self.config = APP_CONFIG.copy()
+        self.test_mode = bool(self.config.get("test_mode", False))
+        self.enable_esp32_uart = bool(self.config.get("enable_esp32_uart", False))
+        self.ide_preview_enabled = bool(self.config.get("ide_preview", False))
         self.runtime_verbose_logs = bool(self.config.get("runtime_verbose_logs", False))
         self.metrics_enabled = bool(self.config.get("metrics_enabled", True))
+        if self.test_mode:
+            self.ide_preview_enabled = True
+            self.runtime_verbose_logs = False
+            self.metrics_enabled = False
+        self.config["enable_esp32_uart"] = self.enable_esp32_uart
+        self.config["ide_preview"] = self.ide_preview_enabled
+        APP_CONFIG["ide_preview"] = self.ide_preview_enabled
         self.metrics_window_size = int(self.config.get("metrics_window_size", 50))
         self.metrics_log_interval_frames = int(
             self.config.get("metrics_log_interval_frames", 30)
         )
         self.recog_latency_ms = []
-        self.abnormal_delay_ms = []
-        self._abnormal_start_ms = None
         self.no_person_reset_frames = int(self.config.get("no_person_reset_frames", 5))
         self.gc_collect_interval_frames = int(
             self.config.get("gc_collect_interval_frames", 80)
@@ -148,6 +150,9 @@ class SittingPostureMonitor:
         self.last_uart_send_ms = None
         self._uart_none_warned = False
         self.uart_send_interval_ms = int(self.config.get("uart_send_interval_ms", 400))
+        self.detection_enabled = True
+        self._uart_rx_buffer = bytearray()
+        self._reported_detection_enabled = True
 
     def _now_ms(self):
         """
@@ -350,18 +355,9 @@ class SittingPostureMonitor:
         avg_ms = self._window_avg(self.recog_latency_ms)
         p95_ms = self._window_p95(self.recog_latency_ms)
         frame_ok = avg_ms <= 100.0
-        abnormal_last = self.abnormal_delay_ms[-1] if self.abnormal_delay_ms else -1
-        abnormal_avg = self._window_avg(self.abnormal_delay_ms)
-        abnormal_ok = abnormal_last >= 0 and abnormal_last <= 1000
         print(
-            "[KPI] frame_avg_ms={:.1f} frame_p95_ms={:.1f} frame_le_100ms={} "
-            "abnormal_delay_last_ms={} abnormal_delay_avg_ms={:.1f} abnormal_le_1000ms={}".format(
-                avg_ms,
-                p95_ms,
-                frame_ok,
-                abnormal_last,
-                abnormal_avg,
-                abnormal_ok,
+            "[KPI] frame_avg_ms={:.1f} frame_p95_ms={:.1f} frame_le_100ms={}".format(
+                avg_ms, p95_ms, frame_ok
             )
         )
 
@@ -383,6 +379,12 @@ class SittingPostureMonitor:
             但功能可能受限。
         """
         print("\n[*] 正在初始化系统...")
+        if self.test_mode:
+            print(
+                "[*] 当前运行于测试模式：IDE预览=开，ESP32 UART跟随开关={}, 逐帧日志=开".format(
+                    self.enable_esp32_uart
+                )
+            )
 
         # 1. 初始化摄像头
         print("\n[*] 步骤1/4: 初始化摄像头...")
@@ -419,17 +421,15 @@ class SittingPostureMonitor:
         print("\n[*] 步骤3/4: 初始化UART通信...")
         print(
             "[*] UART开关: enable_esp32_uart={}, uart_id={}, tx_pin={}, rx_pin={}, baud={}".format(
-                self.config.get("enable_esp32_uart", False),
+                self.enable_esp32_uart,
                 self.config.get("uart_id", 1),
                 self.config.get("uart_tx_pin", 3),
                 self.config.get("uart_rx_pin", 4),
                 self.config.get("uart_baudrate", 115200),
             )
         )
-        self.uart = (
-            self._init_uart() if self.config.get("enable_esp32_uart", False) else None
-        )
-        if self.uart is None and self.config.get("enable_esp32_uart", False):
+        self.uart = self._init_uart() if self.enable_esp32_uart else None
+        if self.uart is None and self.enable_esp32_uart:
             print("[*] 继续运行，但无法与ESP32通信")
         elif self.uart is None:
             print("[*] 已禁用ESP32 UART，当前仅输出到K230 IDE串口")
@@ -487,21 +487,14 @@ class SittingPostureMonitor:
 
         返回:
             dict: 处理结果，包含以下字段:
-                - posture_type: str 姿态类型 ('normal', 'head_down', 'hunchback', 'tilt', 'unknown')
-                - is_abnormal: bool 是否异常姿势
-                - confidence: float 检测置信度(0-1)
-                - keypoints: list 17个关键点 [(x, y, conf), ...]
-                - bbox: tuple 人体边界框 (x1, y1, x2, y2)
+                - posture_type: str 姿态类型 ('normal', 'head_down', 'hunchback', 'unknown', 'no_person')
+                - person_debug: dict 人体存在过滤中间量
+                - posture_debug: dict 姿态角度与几何中间量
 
             如果检测失败，返回None
         """
         result = {
             "posture_type": "unknown",
-            "posture_type_fine": "unknown",
-            "is_abnormal": False,
-            "confidence": 0.0,
-            "keypoints": [],
-            "bbox": None,
             "person_debug": {},
             "posture_debug": {},
         }
@@ -515,28 +508,13 @@ class SittingPostureMonitor:
                 if detection_result:
                     # 提取检测结果
                     pose_type = detection_result.get("pose_type", "unknown")
-                    result["posture_type_fine"] = pose_type
-                    if pose_type == "normal":
-                        result["posture_type"] = "normal"
-                        result["is_abnormal"] = False
-                    elif pose_type in ("head_down", "hunchback", "tilt", "unknown"):
-                        result["posture_type"] = "bad"
-                        result["is_abnormal"] = True
-                    else:
-                        result["posture_type"] = "bad"
-                        result["is_abnormal"] = True
-                    result["confidence"] = detection_result.get("confidence", 0.0)
-                    result["keypoints"] = detection_result.get("keypoints", [])
-                    result["bbox"] = detection_result.get("bbox", None)
+                    result["posture_type"] = pose_type
                     result["person_debug"] = detection_result.get("person_debug", {})
                     result["posture_debug"] = detection_result.get("angles", {})
 
                 else:
                     # 未检测到人体
                     result["posture_type"] = "no_person"
-                    result["posture_type_fine"] = "no_person"
-                    result["is_abnormal"] = False
-                    result["confidence"] = 0.0
                     result["person_debug"] = getattr(
                         self.detector, "last_person_debug", {}
                     )
@@ -548,9 +526,6 @@ class SittingPostureMonitor:
                     print("[!] 警告: 检测器未初始化，使用模拟数据")
                     self._warned_detector_uninitialized = True
                 result["posture_type"] = "normal"
-                result["posture_type_fine"] = "normal"
-                result["is_abnormal"] = False
-                result["confidence"] = 0.85
                 result["person_debug"] = {"reason": "detector_uninitialized_mock"}
                 result["posture_debug"] = {}
 
@@ -571,11 +546,7 @@ class SittingPostureMonitor:
 
         参数:
             data: dict 要发送的数据字典，包含基础信息
-                - frame_id: int 帧序号
                 - posture_type: str 姿态类型
-                - is_abnormal: bool 是否异常
-                - consecutive_abnormal: int 连续异常帧数
-                - confidence: float 检测置信度
 
         返回:
             bool: 是否发送成功
@@ -589,15 +560,7 @@ class SittingPostureMonitor:
 
         JSON格式示例：
             {
-                "frame_id": 123,
-                "posture_type": "bad",             # 粗粒度状态：normal/no_person/bad
-                "posture_type_fine": "head_down",  # 细粒度状态：head_down/hunchback/tilt/unknown
-                "is_abnormal": true,                # 是否异常姿态
-                "consecutive_abnormal": 6,          # 连续异常帧数
-                "confidence": 0.95,                 # 人体检测置信度
-                "person_debug": {},                 # 人体存在过滤中间量
-                "posture_debug": {},                # 姿态角度/风险中间量
-                "timestamp": 1698765432             # 发送时刻毫秒时间戳
+                "posture_type": "head_down"
             }
         """
         if self.uart is None:
@@ -613,9 +576,6 @@ class SittingPostureMonitor:
 
             output = {
                 "posture_type": data.get("posture_type", "unknown"),
-                "is_abnormal": data.get("is_abnormal", False),
-                "consecutive_abnormal": data.get("consecutive_abnormal", 0),
-                "confidence": data.get("confidence", 0.0),
             }
             json_str = json.dumps(output) + "\n"
 
@@ -651,17 +611,89 @@ class SittingPostureMonitor:
             self._diff_ms(now_ms, self.last_uart_send_ms) >= self.uart_send_interval_ms
         )
 
+    def _apply_uart_command(self, raw_line):
+        """
+        解析来自 ESP32 的单行 UART 控制命令。
+
+        当前仅支持：
+            {"cmd":"set_detection","enabled":true/false}
+        """
+        if not raw_line:
+            return
+
+        try:
+            text = raw_line.decode().strip()
+        except Exception:
+            return
+
+        if not text:
+            return
+
+        try:
+            import json
+
+            payload = json.loads(text)
+        except Exception as e:
+            print("[!] 忽略无法解析的UART命令: {} ({})".format(text, str(e)))
+            return
+
+        if payload.get("cmd") != "set_detection":
+            return
+
+        enabled = bool(payload.get("enabled", True))
+        if self.detection_enabled != enabled:
+            self.detection_enabled = enabled
+            self._reported_detection_enabled = False
+            print("[*] 检测状态已切换: {}".format("开启" if enabled else "暂停"))
+
+    def poll_uart_commands(self):
+        """
+        非阻塞轮询 ESP32 下发命令。
+
+        即使检测被暂停，也必须保留这个入口以便后续恢复。
+        """
+        if self.uart is None:
+            return
+
+        try:
+            while self.uart.any():
+                chunk = self.uart.read(1)
+                if not chunk:
+                    break
+                if chunk == b"\n":
+                    self._apply_uart_command(bytes(self._uart_rx_buffer))
+                    self._uart_rx_buffer = bytearray()
+                elif chunk != b"\r":
+                    if len(self._uart_rx_buffer) < 128:
+                        self._uart_rx_buffer.extend(chunk)
+                    else:
+                        self._uart_rx_buffer = bytearray()
+        except Exception as e:
+            print("[!] UART命令轮询失败: {}".format(str(e)))
+
     def output_to_ide(self, data):
         """
         将结果输出到 CanMV IDE 串口。
 
         为什么这样做：
-        - 当未启用 ESP32 UART 时，IDE 串口是最直接的调试观察通道。
+        - 测试模式下需要保留逐帧可观测性，即使同时启用了 ESP32 UART。
+        - 非测试模式下，当未启用 ESP32 UART 时，IDE 串口是最直接的调试观察通道。
 
         返回：
         - 无返回值。
         """
         try:
+            if self.test_mode:
+                print(
+                    "frame={} posture={} latency_ms={} fps={:.1f}".format(
+                        data.get("frame_id", 0),
+                        data.get("posture_type", "unknown"),
+                        int(data.get("infer_ms", 0)),
+                        float(data.get("fps", 0.0)),
+                    )
+                )
+                return
+
             if not self.runtime_verbose_logs:
                 print(data.get("posture_type", "unknown"))
                 return
@@ -671,10 +703,6 @@ class SittingPostureMonitor:
             output = {
                 "frame_id": data.get("frame_id", 0),
                 "posture_type": data.get("posture_type", "unknown"),
-                "posture_type_fine": data.get("posture_type_fine", "unknown"),
-                "is_abnormal": data.get("is_abnormal", False),
-                "consecutive_abnormal": data.get("consecutive_abnormal", 0),
-                "confidence": data.get("confidence", 0.0),
                 "person_debug": data.get("person_debug", {}),
                 "posture_debug": data.get("posture_debug", {}),
                 "timestamp": time.ticks_ms(),
@@ -700,11 +728,10 @@ class SittingPostureMonitor:
         运行逻辑：
             1. 启动摄像头采集
             2. 每帧运行YOLOv8n-pose检测
-            3. 分析坐姿状态（正常/异常）
-            4. 统计连续异常帧数
-            5. 达到阈值时触发提醒
-            6. 通过UART发送JSON给ESP32
-            7. 重复直到达到时长/帧数限制或用户中断
+            3. 分析坐姿状态（normal/head_down/hunchback/unknown/no_person）
+            4. 必要时重置姿态稳定状态
+            5. 测试模式下始终输出 IDE 串口日志；启用 UART 时并行发送最小 UART JSON
+            6. 重复直到达到时长/帧数限制或用户中断
 
         异常处理：
             - KeyboardInterrupt (Ctrl+C): 正常停止，关闭资源
@@ -728,11 +755,12 @@ class SittingPostureMonitor:
             self.is_running = True
 
         start_time = time.time()
-        consecutive_abnormal = 0  # 连续异常计数
         no_person_streak = 0
 
         try:
             while self.is_running:
+                self.poll_uart_commands()
+
                 # 检查时长限制
                 if duration_seconds and (time.time() - start_time) >= duration_seconds:
                     print("\n[*] 达到运行时长限制，停止")
@@ -742,6 +770,17 @@ class SittingPostureMonitor:
                 if max_frames and self.frame_count >= max_frames:
                     print(f"\n[*] 达到最大帧数限制 ({max_frames})")
                     break
+
+                if not self.detection_enabled:
+                    if not self._reported_detection_enabled:
+                        print("[*] 检测已暂停，等待 ESP32 恢复命令")
+                        self._reported_detection_enabled = True
+                    time.sleep(0.05)
+                    continue
+
+                if not self._reported_detection_enabled:
+                    print("[*] 检测已恢复")
+                    self._reported_detection_enabled = True
 
                 # 采集图像
                 frame_start = time.time()
@@ -773,69 +812,41 @@ class SittingPostureMonitor:
                     self.no_person_reset_frames > 0
                     and no_person_streak == self.no_person_reset_frames
                 ):
-                    # 连续无人时清空异常累计，避免人员离开后回到画面立刻触发误报警。
-                    consecutive_abnormal = 0
-                    self._abnormal_start_ms = None
+                    # 连续无人时清空姿态稳定状态，避免人员离开后回到画面立刻沿用旧类别。
                     if self.detector and hasattr(self.detector, "reset_posture_state"):
                         self.detector.reset_posture_state()
 
-                # 判断是否异常
-                if result["is_abnormal"]:
-                    if self._abnormal_start_ms is None:
-                        self._abnormal_start_ms = self._now_ms()
-                    consecutive_abnormal += 1
-                    if self.runtime_verbose_logs:
-                        print(
-                            "[!] 检测到异常姿势: {} (连续{}帧)".format(
-                                result["posture_type"], consecutive_abnormal
-                            )
-                        )
+                is_abnormal_posture = result["posture_type"] in (
+                    "hunchback",
+                    "head_down",
+                )
+                if is_abnormal_posture and self.runtime_verbose_logs:
+                    print("[!] 检测到异常姿势: {}".format(result["posture_type"]))
 
-                    # 达到阈值，触发提醒
-                    if consecutive_abnormal >= self.config["abnormal_threshold"]:
-                        if (
-                            self.metrics_enabled
-                            and consecutive_abnormal
-                            == self.config["abnormal_threshold"]
-                            and self._abnormal_start_ms is not None
-                        ):
-                            # 只在首次越过阈值时记录一次延迟，避免同一段异常重复计量。
-                            now_ms = self._now_ms()
-                            delay_ms = self._diff_ms(now_ms, self._abnormal_start_ms)
-                            self._push_window(self.abnormal_delay_ms, delay_ms)
-                        if self.runtime_verbose_logs:
-                            print("[!!!] 触发坐姿提醒！")
-                        # 提醒状态通过 output_payload 的字段发送给 ESP32 侧处理
-
-                else:
-                    # 正常姿势，重置计数
-                    if consecutive_abnormal > 0 and self.runtime_verbose_logs:
-                        print(f"[+] 姿势恢复正常")
-                    consecutive_abnormal = 0
-                    self._abnormal_start_ms = None
+                # 计算帧率
+                frame_time = time.time() - frame_start
+                fps = 1.0 / frame_time if frame_time > 0 else 0
 
                 output_payload = {
                     "frame_id": self.frame_count,
                     "posture_type": result["posture_type"],
-                    "posture_type_fine": result.get("posture_type_fine", "unknown"),
-                    "is_abnormal": result["is_abnormal"],
-                    "consecutive_abnormal": consecutive_abnormal,
-                    "confidence": result.get("confidence", 0.0),
+                    "infer_ms": infer_ms,
+                    "fps": fps,
                     "person_debug": result.get("person_debug", {}),
                     "posture_debug": result.get("posture_debug", {}),
                 }
 
-                if self.config.get("enable_esp32_uart", False):
+                if self.test_mode:
+                    self.output_to_ide(output_payload)
+
+                if self.enable_esp32_uart:
                     now_ms = self._now_ms()
                     if self._should_send_uart(now_ms):
                         self.send_to_esp32(output_payload)
-                else:
+                elif not self.test_mode:
                     self.output_to_ide(output_payload)
 
-                if (
-                    self.config.get("enable_esp32_uart", False)
-                    and self.frame_count % 30 == 0
-                ):
+                if self.enable_esp32_uart and self.frame_count % 30 == 0:
                     print(
                         "[*] UART状态: ok={}, fail={}, uart_ready={}, last_error={}".format(
                             self.uart_send_ok_count,
@@ -844,10 +855,6 @@ class SittingPostureMonitor:
                             self.last_uart_send_error or "none",
                         )
                     )
-
-                # 计算帧率
-                frame_time = time.time() - frame_start
-                fps = 1.0 / frame_time if frame_time > 0 else 0
 
                 # 显示状态（每30帧显示一次）
                 if self.runtime_verbose_logs and self.frame_count % 30 == 0:

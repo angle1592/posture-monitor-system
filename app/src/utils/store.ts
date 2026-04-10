@@ -15,7 +15,8 @@ import { reactive, computed } from 'vue'
 import { queryDeviceProperty, queryDeviceStatus, restoreToken } from './oneNetApi'
 import type { PropertyItem } from './oneNetApi'
 import { formatLocalDate } from './date'
-import { PROP_IDS, POLLING_INTERVALS as PROTO_INTERVALS, SYSTEM_MODE_LABELS, DEVICE_DEFAULTS } from './constants'
+import { PROP_IDS, POLLING_INTERVALS as PROTO_INTERVALS, SYSTEM_MODE_LABELS, DEVICE_DEFAULTS, POSTURE_TYPES } from './constants'
+import { isAbnormalPosture, isHealthyPosture, isTrackedPosture, normalizePostureValue } from './historyChart'
 // 轮询档位：由页面可见性和业务场景共同决定请求频率。
 type PollingProfile = 'background' | 'normal' | 'realtime'
 
@@ -86,6 +87,9 @@ interface AppState {
   lastCheckTime: number       // 最近一次完成拉取的本地时间戳（毫秒）
 
   // 姿势数据
+  postureType: string           // 主姿态语义：normal/head_down/hunchback/no_person/unknown
+  personPresent: boolean        // presence 状态
+  fillLightOn: boolean          // 补光灯状态
   isPosture: boolean           // true=正常坐姿, false=异常坐姿；来自 OneNET 的 isPosture 属性
   lastPostureTime: number      // 最后一次姿势属性时间戳（毫秒），用于“最近更新时间”展示
 
@@ -116,6 +120,9 @@ const state = reactive<AppState>({
   isOnline: false,
   lastCheckTime: 0,
 
+  postureType: POSTURE_TYPES.NORMAL,
+  personPresent: false,
+  fillLightOn: false,
   isPosture: true,
   lastPostureTime: 0,
 
@@ -140,10 +147,28 @@ const state = reactive<AppState>({
 // ===== 计算属性 =====
 
 /** 当前姿势文本 */
-const postureText = computed(() => state.isPosture ? '良好' : '异常')
+const postureText = computed(() => {
+  switch (state.postureType) {
+    case POSTURE_TYPES.NO_PERSON:
+      return '无人'
+    case POSTURE_TYPES.NORMAL:
+      return '正常'
+    case POSTURE_TYPES.HEAD_DOWN:
+      return '低头'
+    case POSTURE_TYPES.HUNCHBACK:
+      return '驼背'
+    default:
+      return '未知'
+  }
+})
 
 /** 当前姿势类型CSS类名 */
-const postureType = computed(() => state.isPosture ? 'normal' : 'abnormal')
+const postureType = computed(() => {
+  if (state.postureType === POSTURE_TYPES.NORMAL) return 'normal'
+  if (state.postureType === POSTURE_TYPES.NO_PERSON) return 'idle'
+  if (state.postureType === POSTURE_TYPES.UNKNOWN) return 'unknown'
+  return 'abnormal'
+})
 
 /** 今日健康评分 (0-100) */
 const healthScore = computed(() => {
@@ -201,8 +226,12 @@ function accumulateUsage(elapsedMs: number) {
 
   if (addMinutes <= 0) return
 
+  if (!isTrackedPosture(normalizePostureValue(state.postureType))) {
+    return
+  }
+
   state.todayTotalMinutes += addMinutes
-  if (state.isPosture) {
+  if (isHealthyPosture(normalizePostureValue(state.postureType))) {
     state.todayGoodMinutes += addMinutes
   }
   saveLocalStats()
@@ -222,25 +251,29 @@ async function fetchLatest() {
     ])
 
     if (props && props.length > 0) {
-      // 属性 ID 映射说明：
-      // - PROP_IDS.IS_POSTURE -> isPosture（坐姿是否正常）
-      // - PROP_IDS.MONITORING_ENABLED -> monitoringEnabled（监控开关）
-      // - PROP_IDS.CURRENT_MODE -> currentMode（系统模式：0/1/2）
-      // 其余如 alertModeMask/cooldownMs/timerDurationSec 等主要在控制页下发。
-      // 通过 PROP_IDS.IS_POSTURE 映射云端属性，统一姿势状态来源。
-      const postureProp = props.find((p: PropertyItem) => p.identifier === PROP_IDS.IS_POSTURE)
+      const postureProp = props.find((p: PropertyItem) => p.identifier === PROP_IDS.POSTURE_TYPE)
       if (postureProp) {
-        const oldPosture = state.isPosture
-        state.isPosture = postureProp.value === true || postureProp.value === 'true'
+        const oldPosture = normalizePostureValue(state.postureType)
+        state.postureType = normalizePostureValue(postureProp.value)
+        state.isPosture = state.postureType === POSTURE_TYPES.NORMAL
         state.lastPostureTime = typeof postureProp.time === 'number'
           ? postureProp.time
           : new Date(postureProp.time).getTime() || Date.now()
 
-        // 如果从正常变为异常，增加异常计数
-        if (oldPosture && !state.isPosture) {
+        if (!isAbnormalPosture(oldPosture) && isAbnormalPosture(normalizePostureValue(state.postureType))) {
           state.todayAbnormalCount++
           saveLocalStats()
         }
+      }
+
+      const personPresentProp = props.find((p: PropertyItem) => p.identifier === PROP_IDS.PERSON_PRESENT)
+      if (personPresentProp) {
+        state.personPresent = personPresentProp.value === true || personPresentProp.value === 'true'
+      }
+
+      const fillLightProp = props.find((p: PropertyItem) => p.identifier === PROP_IDS.FILL_LIGHT_ON)
+      if (fillLightProp) {
+        state.fillLightOn = fillLightProp.value === true || fillLightProp.value === 'true'
       }
 
       // 通过 PROP_IDS.MONITORING_ENABLED 同步设备端监控开关。

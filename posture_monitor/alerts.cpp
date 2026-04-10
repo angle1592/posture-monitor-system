@@ -22,6 +22,11 @@ static bool _indicatorLocked = false;
 static uint8_t _indicatorLockR = 0;
 static uint8_t _indicatorLockG = 0;
 static uint8_t _indicatorLockB = 0;
+static bool _indicatorPulseActive = false;
+static uint8_t _indicatorPulseR = 0;
+static uint8_t _indicatorPulseG = 0;
+static uint8_t _indicatorPulseB = 0;
+static unsigned long _indicatorPulseUntilMs = 0;
 
 #if ENABLE_BUZZER
 static bool _buzzerActive = false;
@@ -84,6 +89,18 @@ void alerts_lockIndicator(bool lock, uint8_t r, uint8_t g, uint8_t b) {
     }
 }
 
+void alerts_triggerIndicatorPulse(unsigned long durationMs, uint8_t r, uint8_t g, uint8_t b) {
+    if ((_alertModeMask & ALERT_MODE_LED) == 0) {
+        return;
+    }
+    _indicatorPulseActive = true;
+    _indicatorPulseR = r;
+    _indicatorPulseG = g;
+    _indicatorPulseB = b;
+    _indicatorPulseUntilMs = millis() + durationMs;
+    _alertsSetIndicatorColor(r, g, b);
+}
+
 void alerts_triggerBuzzerPulse(unsigned long durationMs) {
 #if ENABLE_BUZZER
     if ((_alertModeMask & ALERT_MODE_BUZZER) == 0) {
@@ -107,7 +124,7 @@ bool alerts_voiceEnabled() {
     return (_alertModeMask & ALERT_MODE_VOICE) != 0;
 }
 
-void alerts_update(bool mqttConnected, bool k230Valid, bool isAbnormal, bool noPerson) {
+void alerts_update(bool mqttConnected, bool personPresent, bool shouldAlert) {
 #if ENABLE_BUZZER
     if (_buzzerActive && millis() >= _buzzerUntilMs) {
         // 到时关闭蜂鸣器，形成“非阻塞脉冲”。
@@ -122,6 +139,14 @@ void alerts_update(bool mqttConnected, bool k230Valid, bool isAbnormal, bool noP
         return;
     }
 
+    if (_indicatorPulseActive) {
+        if (millis() < _indicatorPulseUntilMs) {
+            _alertsSetIndicatorColor(_indicatorPulseR, _indicatorPulseG, _indicatorPulseB);
+            return;
+        }
+        _indicatorPulseActive = false;
+    }
+
     if ((_alertModeMask & ALERT_MODE_LED) == 0) {
         // 灯光模式关闭时强制灭灯，不再继续后续颜色状态判定。
         _alertsSetIndicatorColor(0, 0, 0);
@@ -130,7 +155,7 @@ void alerts_update(bool mqttConnected, bool k230Valid, bool isAbnormal, bool noP
 
     // 颜色映射优先级（高 -> 低）：
     // 1) MQTT 断连：红色常亮（链路故障）
-    // 2) K230 无效或无人：灭灯（无有效姿态）
+    // 2) 无人：灭灯（无有效姿态）
     // 3) 姿态异常：红色闪烁（提醒纠正）
     // 4) 姿态正常：绿色常亮（状态正常）
     if (!mqttConnected) {
@@ -139,12 +164,12 @@ void alerts_update(bool mqttConnected, bool k230Valid, bool isAbnormal, bool noP
         return;
     }
 
-    if (!k230Valid || noPerson) {
+    if (!personPresent) {
         _alertsSetIndicatorColor(0, 0, 0);
         return;
     }
 
-    if (isAbnormal) {
+    if (shouldAlert) {
         unsigned long now = millis();
         // 300ms 翻转一次闪烁态：兼顾可见性与不过度刺眼。
         if (now - _alertLastBlink >= 300) {
@@ -167,6 +192,7 @@ void alerts_update(bool mqttConnected, bool k230Valid, bool isAbnormal, bool noP
 
 void alerts_off() {
     _indicatorLocked = false;
+    _indicatorPulseActive = false;
     // 统一关闭可见/可听输出，供模式切换或系统收尾阶段调用。
     _alertsSetIndicatorColor(0, 0, 0);
 #if ENABLE_BUZZER

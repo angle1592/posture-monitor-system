@@ -13,13 +13,21 @@ export const POSTURE_TYPES = {
   NORMAL: 'normal',
   HEAD_DOWN: 'head_down',
   HUNCHBACK: 'hunchback',
-  TILT: 'tilt',
   NO_PERSON: 'no_person',
   UNKNOWN: 'unknown',
-  BAD: 'bad',
 } as const
 
 export type PostureType = (typeof POSTURE_TYPES)[keyof typeof POSTURE_TYPES]
+
+export const POSTURE_TYPE_CODES = {
+  NO_PERSON: 0,
+  NORMAL: 1,
+  HEAD_DOWN: 2,
+  HUNCHBACK: 3,
+} as const
+
+export type PostureTypeCode =
+  (typeof POSTURE_TYPE_CODES)[keyof typeof POSTURE_TYPE_CODES]
 
 // ============================================================
 // System Modes
@@ -48,17 +56,19 @@ export const SYSTEM_MODE_LABELS: Record<string, string> = {
 // MQTT Property Identifiers (ESP32 <-> OneNET)
 // ============================================================
 export const PROP_IDS = {
-  IS_POSTURE: 'isPosture',
+  POSTURE_TYPE: 'postureType',
   MONITORING_ENABLED: 'monitoringEnabled',
   CURRENT_MODE: 'currentMode',
   PERSON_PRESENT: 'personPresent',
   AMBIENT_LUX: 'ambientLux',
+  FILL_LIGHT_ON: 'fillLightOn',
   ALERT_MODE_MASK: 'alertModeMask',
   COOLDOWN_MS: 'cooldownMs',
   TIMER_DURATION_SEC: 'timerDurationSec',
   TIMER_RUNNING: 'timerRunning',
   CFG_VERSION: 'cfgVersion',
   SELF_TEST: 'selfTest',
+  IS_POSTURE: 'isPosture',
 } as const
 
 export type PropertyIdentifier = (typeof PROP_IDS)[keyof typeof PROP_IDS]

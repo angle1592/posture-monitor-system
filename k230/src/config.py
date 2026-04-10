@@ -56,10 +56,12 @@ APP_CONFIG = {
     # 建议范围：300 ~ 500；建议先保持识别连续，仅调这个参数。
     "uart_send_interval_ms": 400,
     "camera_flush_frames": 1,
-    # 连续异常帧阈值（达到后触发提醒）
-    "abnormal_threshold": 2,
     # 是否启用 ESP32 UART 输出
+    # 当前联调默认开启，使 K230 在识别运行时持续向 ESP32 输出最小姿态 JSON。
     "enable_esp32_uart": True,
+    # 测试模式开关：用于在 CanMV IDE 中验证算法效果。
+    # 开启后会强制打开 IDE 预览，并在 IDE 串口逐帧输出状态；是否发往 ESP32 仅由 enable_esp32_uart 控制。
+    "test_mode": False,
     # UART 控制器编号（对应 machine.UART 的设备号）
     "uart_id": 1,
     # UART 波特率（需与 ESP32 端完全一致）
@@ -71,9 +73,9 @@ APP_CONFIG = {
     # 是否保存采集图像（调试用，开启会增加存储与IO开销）
     "save_images": False,
     # 全局调试开关（影响 logger 输出级别）
-    "debug": False,
+    "debug": True,
     # IDE 预览开关与参数
-    "ide_preview": False,
+    "ide_preview": True,
     "ide_preview_fps": 15,
     # LT9611/ST7701/VIRT
     "ide_preview_mode": "LT9611",
@@ -111,72 +113,20 @@ PERSON_FILTER = {
     "person_min_keypoints": 2,
 }
 
-# 姿态判定参数（关键点几何特征 + 风险分数 + 迟滞）
+# 姿态判定参数（5关键点几何规则）
 POSTURE_THRESHOLDS = {
-    # posture_mode: 姿态判定模式
-    # - legacy: 经典风险融合路径（便于平滑和迟滞）
-    # - decoupled: 分类分支解耦路径（便于解释 head_down/hunchback/tilt 的分值）
-    "posture_mode": "legacy",
-    # posture_profile: 当前阈值配置版本标签，便于记录调参批次
-    "posture_profile": "legacy_20260221222815",
-    # 几何特征上限（超过即增加异常风险）
-    # torso_tilt_max_deg: 躯干偏离竖直方向的容忍角度（度）
-    # 调大 -> 更不敏感（不容易判驼背）；调小 -> 更敏感。
+    # torso_tilt_threshold_deg: 躯干线相对图像竖直方向的容忍角度（度）
+    # 调大 -> 更不敏感；调小 -> 更容易判驼背。
     # 建议步长：1~2；建议范围：12 ~ 30。
-    "torso_tilt_max_deg": 18.0,
-    # neck_tilt_max_deg: 颈部/头部相对竖直方向的容忍角度（度）
-    # 调大 -> 更不敏感（不容易判低头）；调小 -> 更敏感。
+    "torso_tilt_threshold_deg": 12,
+    # head_tilt_threshold_deg: 鼻子到肩中点连线相对图像竖直方向的容忍角度（度）
+    # 调大 -> 更不敏感；调小 -> 更容易判低头。
     # 建议步长：1~2；建议范围：15 ~ 35。
-    "neck_tilt_max_deg": 24.0,
-    "neck_relative_tilt_max_deg": 24.0,
-    # head_forward_ratio_max: 头部前探比例上限（|nose_x-shoulder_center_x| / shoulder_width）
-    # 调大 -> 前探容忍更高；调小 -> 更容易判头前伸/低头。
-    # 建议步长：0.02；建议范围：0.20 ~ 0.60。
-    "head_forward_ratio_max": 0.45,
-    # shoulder_roll_ratio_max: 肩膀高低差比例上限（|yL-yR| / shoulder_width）
-    # 调大 -> 对侧倾更宽松；调小 -> 更容易判侧倾。
-    # 建议步长：0.02；建议范围：0.10 ~ 0.35。
-    "shoulder_roll_ratio_max": 0.17,
-    # 风险特征权重（总和建议接近1）
-    # 含义：各异常特征在综合风险中的占比，哪个权重大，哪个更影响最终异常结论。
-    # 调参建议：某类误判多，就降低该类对应权重。
-    "w_torso": 0.34,
-    "w_neck": 0.30,
-    "w_head_forward": 0.08,
-    "w_roll": 0.14,
-    "w_side_face": 0.14,
-    "w_side_risk_factor": 1.00,
-    "side_face_min_ratio": 0.70,
-    "head_dominance_margin": 1.00,
-    "torso_dominance_margin": 1.00,
-    "tilt_dominance_margin": 1.00,
-    # 风险平滑 + 迟滞阈值（降低抖动误判）
-    # risk_ema_alpha: EMA平滑系数，越大越跟随当前帧，越小越平滑。
-    # 建议步长：0.05；建议范围：0.20 ~ 0.70。
-    "risk_ema_alpha": 0.50,
-    # risk_enter: 从 normal 进入 abnormal 的阈值（应高于 risk_exit）。
-    # 调大 -> 更难进入异常（降低敏感度）；调小 -> 更容易报警。
-    # 建议步长：0.03；建议范围：0.45 ~ 0.80。
-    "risk_enter": 0.60,
-    "risk_instant_enter": 0.56,
-    "risk_soft_enter": 0.50,
-    "dominant_score_gap_enter": 0.030,
-    # risk_exit: 从 abnormal 恢复 normal 的阈值。
-    # 调大 -> 更容易恢复正常；调小 -> 异常状态保持更久。
-    # 建议步长：0.03；建议范围：0.20 ~ 0.55。
-    # 推荐关系：risk_enter > risk_exit，二者至少相差 0.10。
-    "risk_exit": 0.46,
-    "risk_instant_exit": 0.42,
-    "baseline_warmup_frames": 20,
-    "neck_delta_max_deg": 12.0,
-    "torso_delta_max_deg": 10.0,
-    "roll_delta_max": 0.16,
-    "head_forward_delta_max": 0.20,
-    "class_score_alpha": 0.50,
-    "class_enter": 0.56,
-    "class_exit": 0.42,
-    "class_instant_enter": 0.62,
-    "class_instant_exit": 0.36,
-    "view_side_ratio": 0.14,
-    "view_semiside_ratio": 0.24,
+    "head_tilt_threshold_deg": 60,
+    # required_keypoint_confidence: 5 个必需关键点的最低置信度要求
+    # 只有鼻子、左右肩、左右髋都达到该阈值时，才进入姿态判定。
+    "required_keypoint_confidence": 0.25,
+    # stable_frame_count: 同一类别连续出现多少帧后才确认输出
+    # 单张图片测试默认保持 1，实时视频可调整为 2。
+    "stable_frame_count": 3,
 }
