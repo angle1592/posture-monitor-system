@@ -90,7 +90,7 @@
 
 // --- 补光 LED ---
 #define ENABLE_FILL_LIGHT   1   // 0=禁用补光控制, 1=启用 GPIO 开关控制
-#define FILL_LIGHT_PIN      18  // 白光 LED 控制引脚（需串联限流电阻）
+#define FILL_LIGHT_PIN      13  // 白光 LED 控制引脚（需串联限流电阻）
 #define FILL_LIGHT_LUX_THRESHOLD 20  // 低于该 lux 且 PIR=有人时打开补光
 
 // --- SYN-6288 语音合成模块 ---
