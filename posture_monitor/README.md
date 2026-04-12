@@ -7,7 +7,7 @@ ESP32-S3 firmware for a posture monitoring device. The board receives posture re
 - UART JSON parsing from K230 (`k230_parser.h`)
 - WiFi + MQTT telemetry and cloud command handling (`mqtt_handler.h`)
 - Onboard status LED indication and optional buzzer alerts (`alerts.h`)
-- Optional modules with compile-time stubs: OLED, EC11, PIR, light sensor, voice
+- Optional modules with compile-time stubs: OLED, EC11, presence sensor, light sensor, voice
 - Non-blocking loop scheduling with `millis()` timers
 
 ## Hardware
@@ -76,6 +76,7 @@ All runtime configuration is in `config.h`:
 
 - This project uses manual JSON parsing/building (`strstr`/`sprintf`) and does not use ArduinoJson.
 - Keep real credentials out of version control.
+- The current presence sensor path is a beam-break infrared sensor; HC-SR501 demos remain only for isolated historical troubleshooting.
 
 ## Additional Docs
 
@@ -83,4 +84,4 @@ All runtime configuration is in `config.h`:
 - `docs/hardware-wiring.md`: wiring map, power notes, and timer interaction design.
 - `docs/onenet-property-model.md`: unified OneNET property identifiers, types, ranges, and JSON examples.
 - `docs/integration-debug-summary-2026-02.md`: integration notes and troubleshooting history.
-- `demos/README.md`: standalone BH1750 and HC-SR501 test sketches before full-system integration.
+- `demos/README.md`: standalone troubleshooting sketches, including historical HC-SR501 tests and current beam-break-related wiring notes.

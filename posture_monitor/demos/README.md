@@ -6,7 +6,7 @@
 > 实物补光控制实际改为 `GPIO13`，而不是先前排查时使用的 `GPIO18`。
 > 如果你的板子也采用这版接线，请先同步核对实物连线，并修改 `config.h` 中的 `FILL_LIGHT_PIN` 以及相关 demo 使用的控制引脚，再继续测试。
 
-当前主固件已经接入 HC-SR501 与 GY-302 BH1750；这些 Demo 继续保留，主要用于单模块排障、复测与接线确认。
+当前主固件的人体存在检测已经切换到**对射式红外传感器**，GY-302 BH1750 仍为当前主链路传感器；`HC-SR501` 相关 Demo 继续保留，主要用于历史对照、单模块排障、复测与 GPIO 输入口确认。
 
 ## 目录
 
@@ -18,7 +18,7 @@
 - `demo_uart_loopback/demo_uart_loopback.ino`：ESP32 板内自环验证 GPIO17/GPIO18 串口收发
 - `demo_gpio18_high/demo_gpio18_high.ino`：将 GPIO18 持续拉高，用于验证该引脚输出/焊点
 - `demo_gpio18_toggle/demo_gpio18_toggle.ino`：让 GPIO18 在高低电平间交替，用于判断补光驱动极性
-- `demo_fill_light_path/demo_fill_light_path.ino`：联调 PIR + BH1750 + GPIO18 补光链路
+- `demo_fill_light_path/demo_fill_light_path.ino`：联调人体存在传感器 + BH1750 + `FILL_LIGHT_PIN` 补光链路
 
 ## 测试原则
 
@@ -159,16 +159,16 @@
 
 当主固件里已经满足“有人 + 低照度”但补光灯仍不亮时，优先运行此 Demo：
 
-- **注意**：如果你的实物补光控制线已经改到 `GPIO13`，要先同步修改 `config.h` 中的 `FILL_LIGHT_PIN`，否则日志里的 GPIO 输出引脚与实物不一致
+- 当前仓库配置中，补光控制已经切到 `GPIO13`；如果你的实物不是这版接线，先检查 `config.h` 中的 `FILL_LIGHT_PIN` 与实物是否一致
 
 - 接线保持与整机一致：
   - 人体存在传感器 `OUT -> GPIO4`
   - BH1750 `SDA -> GPIO1`、`SCL -> GPIO2`、`ADDR -> GND`
-  - 补光控制 `CTRL -> GPIO18`
+  - 补光控制 `CTRL -> GPIO13`（或当前 `FILL_LIGHT_PIN`）
 - Demo 不依赖 K230、MQTT、OLED 或主状态机，只验证三段链路：
   - 人体存在输入
   - 光照输入
-  - GPIO18 输出
+  - `FILL_LIGHT_PIN` 输出
 - 串口会持续打印：
   - `rawLevel` / `rawActiveByConfig`
   - `presenceReady` / `presencePresent`
@@ -178,11 +178,11 @@
 
 ### 判定标准
 
-- 若日志显示 `fill light ON` 且 `GPIO18 -> HIGH`，但实物补光灯不亮：
-  - 优先排查 GPIO18 接线、驱动级、供电、共地、极性
+- 若日志显示 `fill light ON` 且当前补光控制脚输出有效电平，但实物补光灯不亮：
+  - 优先排查当前 `FILL_LIGHT_PIN` 接线、驱动级、供电、共地、极性
 - 若日志显示 `presence=false`：
-  - 优先排查 PIR 极性、接线、预热时间、传感器本体
+  - 优先排查对射式红外接线、发射/接收是否对准、光路是否被遮挡、输出极性是否与配置一致
 - 若日志显示 `BH1750 not ready` 或 lux 一直异常偏大：
   - 优先排查 BH1750 供电、I2C 接线、地址与模块状态
-- 若日志反复提示当前配置的 PIR 有效电平不是 `HIGH`：
-  - 需要重点核对 `config.h` 中 `PERSON_SENSOR_ACTIVE_LEVEL` 是否与实物输出极性一致
+- 若日志长期显示 `presence=true` 且原始电平不变化：
+  - 优先检查对射式红外 `VCC/GND/DO` 是否接错、是否共地、是否一直遮挡光路，以及 `PERSON_SENSOR_ACTIVE_LEVEL` 是否配置正确
