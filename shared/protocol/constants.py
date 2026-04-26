@@ -7,7 +7,7 @@ Keep in sync with constants.h (ESP32) and constants.ts (App).
 """
 
 # === UART Configuration (K230 -> ESP32) ===
-UART_BAUDRATE = 115200
+UART_BAUDRATE = 9600
 UART_TX_PIN = 3
 UART_RX_PIN = 4
 

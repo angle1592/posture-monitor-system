@@ -21,6 +21,7 @@ uni-vue3-ts/
 │   │   └── control/
 │   ├── utils/
 │   │   ├── oneNetApi.ts
+│   │   ├── realtime/
 │   │   ├── store.ts
 │   │   └── mqtt.js
 │   ├── App.vue
@@ -69,9 +70,12 @@ npm run type-check
 - Test command: `npm run test` (currently supports empty test sets via `--passWithNoTests`)
 - Keep credentials and tokens out of repository files.
 - Prefer type-safe changes (`strict` TypeScript project).
+- HTTP remains the control/history transport; MQTT is an optional realtime channel for H5/App Plus.
+- `src/utils/mqtt.js` is legacy-only; active realtime code lives under `src/utils/realtime/`.
 
 ## Docs
 
 - Product docs index: `refactored/docs/index.md`
 - OneNET property model: `docs/onenet-property-model.md`
 - OneNET API interface document: `docs/api/oneNet-api.md`
+- HTTP + MQTT hybrid architecture: `docs/app-http-mqtt-architecture.md`

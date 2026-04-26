@@ -17,6 +17,15 @@ import type { PropertyItem } from './oneNetApi'
 import { formatLocalDate } from './date'
 import { PROP_IDS, POLLING_INTERVALS as PROTO_INTERVALS, SYSTEM_MODE_LABELS, DEVICE_DEFAULTS, POSTURE_TYPES } from './constants'
 import { isAbnormalPosture, isHealthyPosture, isTrackedPosture, normalizePostureValue } from './historyChart'
+import {
+  connectRealtime,
+  getRealtimeState,
+  initRealtimeClient,
+  onRealtimeMessage,
+  onRealtimeStateChange,
+} from './realtime/mqtt-client'
+import { parseRealtimePayload, toPropertyPatch } from './realtime/message-adapter'
+import type { RealtimeConnectionState, RealtimePropertyPatch, RealtimeTransportConfig } from './realtime/types'
 // 轮询档位：由页面可见性和业务场景共同决定请求频率。
 type PollingProfile = 'background' | 'normal' | 'realtime'
 
@@ -36,6 +45,55 @@ interface LocalSettings {
   currentMode?: string
   // 最近一次监控开关状态。
   monitoringEnabled?: boolean
+}
+
+type DeviceSyncStrategy = 'mqtt' | 'http'
+
+function parseEnvBoolean(value: unknown): boolean {
+  return String(value ?? '').trim() === 'true'
+}
+
+function getRealtimeConfig(): RealtimeTransportConfig {
+  return {
+    enabled: parseEnvBoolean(import.meta.env.VITE_MQTT_ENABLED),
+    host: String(import.meta.env.VITE_MQTT_HOST ?? '').trim(),
+    port: Number(import.meta.env.VITE_MQTT_PORT ?? 8084) || 8084,
+    useSSL: !String(import.meta.env.VITE_MQTT_USE_SSL ?? '').trim() || parseEnvBoolean(import.meta.env.VITE_MQTT_USE_SSL),
+    clientId: String(import.meta.env.VITE_MQTT_CLIENT_ID ?? '').trim(),
+    username: String(import.meta.env.VITE_MQTT_USERNAME ?? '').trim(),
+    password: String(import.meta.env.VITE_MQTT_PASSWORD ?? '').trim(),
+    publishTopic: String(import.meta.env.VITE_MQTT_TOPIC_UP ?? '').trim(),
+    subscribeTopic: String(import.meta.env.VITE_MQTT_TOPIC_DOWN ?? '').trim(),
+  }
+}
+
+function parseRealtimeTimestamp(value: string | number | null): number {
+  if (typeof value === 'number') return value
+  if (typeof value === 'string') {
+    const parsed = new Date(value).getTime()
+    return Number.isNaN(parsed) ? 0 : parsed
+  }
+  return 0
+}
+
+function toRealtimePropertyItems(patch: RealtimePropertyPatch): PropertyItem[] {
+  const items: PropertyItem[] = []
+  const timestamp = patch._meta.timestamp ?? Date.now()
+
+  for (const [identifier, value] of Object.entries(patch)) {
+    if (identifier === '_meta' || value === undefined) continue
+    items.push({
+      identifier,
+      value,
+      time: timestamp,
+    })
+  }
+
+  return items
+}
+
+function toBooleanValue(value: unknown): boolean {
+  return value === true || value === 'true' || value === 1 || value === '1'
 }
 
 function getErrorMessage(error: unknown): string {
@@ -69,6 +127,82 @@ function inferOnlineFromProperties(props: PropertyItem[] | null, now: number): b
   // 属性流最近 5 分钟内有新时间戳，就把设备视为在线。
   // 这个兜底用于覆盖 detail 接口偶发延迟更新的情况。
   return now - latest < DEVICE_DEFAULTS.ONLINE_TIMEOUT_MS
+}
+
+function updateRealtimeAvailability(now: number = Date.now()) {
+  if (state.realtimeState !== 'connected' || state.lastRealtimeMessageTime <= 0) {
+    state.realtimeAvailable = false
+    return
+  }
+
+  const freshnessWindowMs = DEVICE_DEFAULTS.PUBLISH_INTERVAL_MS * 3
+  state.realtimeAvailable = now - state.lastRealtimeMessageTime <= freshnessWindowMs
+}
+
+function applyProperties(props: PropertyItem[] | null, now: number) {
+  if (!props || props.length === 0) {
+    return
+  }
+
+  const postureProp = props.find((p: PropertyItem) => p.identifier === PROP_IDS.POSTURE_TYPE)
+  if (postureProp) {
+    const oldPosture = normalizePostureValue(state.postureType)
+    state.postureType = normalizePostureValue(postureProp.value)
+    state.isPosture = state.postureType === POSTURE_TYPES.NORMAL
+    state.lastPostureTime = typeof postureProp.time === 'number'
+      ? postureProp.time
+      : new Date(postureProp.time).getTime() || now
+
+    if (!isAbnormalPosture(oldPosture) && isAbnormalPosture(normalizePostureValue(state.postureType))) {
+      state.todayAbnormalCount++
+      saveLocalStats()
+    }
+  }
+
+  const personPresentProp = props.find((p: PropertyItem) => p.identifier === PROP_IDS.PERSON_PRESENT)
+  if (personPresentProp) {
+    state.personPresent = toBooleanValue(personPresentProp.value)
+  }
+
+  const fillLightProp = props.find((p: PropertyItem) => p.identifier === PROP_IDS.FILL_LIGHT_ON)
+  if (fillLightProp) {
+    state.fillLightOn = toBooleanValue(fillLightProp.value)
+  }
+
+  const monProp = props.find((p: PropertyItem) => p.identifier === PROP_IDS.MONITORING_ENABLED)
+  if (monProp) {
+    state.monitoringEnabled = toBooleanValue(monProp.value)
+  }
+
+  const modeProp = props.find((p: PropertyItem) => p.identifier === PROP_IDS.CURRENT_MODE)
+  if (modeProp) {
+    const parsedMode = parseCurrentMode(modeProp.value)
+    if (parsedMode) {
+      state.currentMode = parsedMode
+    }
+  }
+}
+
+function bindRealtimeChannel() {
+  if (realtimeBound) return
+
+  onRealtimeStateChange((nextState) => {
+    state.realtimeState = nextState
+    updateRealtimeAvailability()
+    applyPollingPolicy(nextState !== 'connected')
+  })
+
+  onRealtimeMessage((_topic, rawPayload) => {
+    const envelope = parseRealtimePayload(rawPayload)
+    const patch = envelope && toPropertyPatch(envelope)
+    if (!patch) {
+      return
+    }
+
+    applyRealtimePatch(patch)
+  })
+
+  realtimeBound = true
 }
 
 const POLLING_INTERVALS: Record<PollingProfile, number> = {
@@ -110,6 +244,11 @@ interface AppState {
   pollingIntervalMs: number   // 当前实际生效间隔（毫秒）
   appVisible: boolean         // 应用/页面可见性（用于后台降频）
 
+  // 实时通道
+  realtimeState: RealtimeConnectionState // MQTT 实时通道状态
+  realtimeAvailable: boolean  // 当前是否有可用实时通道
+  lastRealtimeMessageTime: number // 最近一条实时消息时间
+
   // 加载/错误状态
   isLoading: boolean           // 当前是否正在拉取设备数据
   lastError: string | null     // 最近一次请求错误信息（用于页面提示或调试）
@@ -140,9 +279,15 @@ const state = reactive<AppState>({
   pollingIntervalMs: POLLING_INTERVALS.normal,
   appVisible: true,
 
+  realtimeState: 'idle',
+  realtimeAvailable: false,
+  lastRealtimeMessageTime: 0,
+
   isLoading: false,
   lastError: null,
 })
+
+let realtimeBound = false
 
 // ===== 计算属性 =====
 
@@ -208,10 +353,42 @@ const modeText = computed(() => {
 function init() {
   // 先恢复鉴权信息，确保后续请求可直接访问 OneNET。
   restoreToken()
+  bindRealtimeChannel()
+  initRealtimeClient(getRealtimeConfig())
+  state.realtimeState = getRealtimeState()
+  updateRealtimeAvailability()
   // 恢复“当天统计”与“控制设置”，用于首屏快速回显。
   loadLocalStats()
   loadLocalSettings()
   console.log('[Store] 初始化完成')
+}
+
+function applyRealtimePatch(patch: RealtimePropertyPatch) {
+  const propertyItems = toRealtimePropertyItems(patch)
+  const timestamp = parseRealtimeTimestamp(patch._meta.timestamp) || Date.now()
+
+  state.realtimeState = 'connected'
+  state.lastRealtimeMessageTime = timestamp
+  applyProperties(propertyItems, timestamp)
+  updateRealtimeAvailability(timestamp)
+  applyPollingPolicy(false)
+}
+
+async function ensureRealtimeConnection() {
+  const nextState = await connectRealtime()
+  state.realtimeState = nextState
+  updateRealtimeAvailability()
+  applyPollingPolicy(nextState !== 'connected')
+}
+
+async function confirmDeviceSync(): Promise<DeviceSyncStrategy> {
+  updateRealtimeAvailability()
+  if (state.realtimeAvailable) {
+    return 'mqtt'
+  }
+
+  await fetchLatest()
+  return 'http'
 }
 
 function accumulateUsage(elapsedMs: number) {
@@ -250,52 +427,13 @@ async function fetchLatest() {
       queryDeviceStatus(),
     ])
 
-    if (props && props.length > 0) {
-      const postureProp = props.find((p: PropertyItem) => p.identifier === PROP_IDS.POSTURE_TYPE)
-      if (postureProp) {
-        const oldPosture = normalizePostureValue(state.postureType)
-        state.postureType = normalizePostureValue(postureProp.value)
-        state.isPosture = state.postureType === POSTURE_TYPES.NORMAL
-        state.lastPostureTime = typeof postureProp.time === 'number'
-          ? postureProp.time
-          : new Date(postureProp.time).getTime() || Date.now()
-
-        if (!isAbnormalPosture(oldPosture) && isAbnormalPosture(normalizePostureValue(state.postureType))) {
-          state.todayAbnormalCount++
-          saveLocalStats()
-        }
-      }
-
-      const personPresentProp = props.find((p: PropertyItem) => p.identifier === PROP_IDS.PERSON_PRESENT)
-      if (personPresentProp) {
-        state.personPresent = personPresentProp.value === true || personPresentProp.value === 'true'
-      }
-
-      const fillLightProp = props.find((p: PropertyItem) => p.identifier === PROP_IDS.FILL_LIGHT_ON)
-      if (fillLightProp) {
-        state.fillLightOn = fillLightProp.value === true || fillLightProp.value === 'true'
-      }
-
-      // 通过 PROP_IDS.MONITORING_ENABLED 同步设备端监控开关。
-      const monProp = props.find((p: PropertyItem) => p.identifier === PROP_IDS.MONITORING_ENABLED)
-      if (monProp) {
-        state.monitoringEnabled = monProp.value === true || monProp.value === 'true'
-      }
-
-      // 通过 PROP_IDS.CURRENT_MODE 同步系统模式（posture/clock/timer）。
-      const modeProp = props.find((p: PropertyItem) => p.identifier === PROP_IDS.CURRENT_MODE)
-      if (modeProp) {
-        const parsedMode = parseCurrentMode(modeProp.value)
-        if (parsedMode) {
-          state.currentMode = parsedMode
-        }
-      }
-    }
+    applyProperties(props, now)
 
     const onlineByPropertyStream = inferOnlineFromProperties(props, now)
     state.isOnline = status || onlineByPropertyStream
     accumulateUsage(elapsedMs)
     state.lastCheckTime = now
+    updateRealtimeAvailability(now)
   } catch (e: unknown) {
     state.lastError = getErrorMessage(e)
     state.isOnline = false
@@ -307,6 +445,7 @@ async function fetchLatest() {
 
 function getEffectivePollingProfile(): PollingProfile {
   if (!state.appVisible) return 'background'
+  if (state.realtimeAvailable && state.pollingProfile === 'realtime') return 'normal'
   return state.pollingProfile
 }
 
@@ -370,6 +509,9 @@ function setPollingProfile(profile: PollingProfile, fetchImmediately: boolean = 
 function setAppVisibility(visible: boolean) {
   // 可见性变化会触发策略重算：后台降频、前台恢复。
   state.appVisible = visible
+  if (visible) {
+    void ensureRealtimeConnection()
+  }
   applyPollingPolicy(visible)
 }
 
@@ -455,6 +597,8 @@ export const store = reactive({
   stopPolling,
   setPollingProfile,
   setAppVisibility,
+  applyRealtimePatch,
+  confirmDeviceSync,
   saveLocalStats,
   saveLocalSettings,
   resetTodayStats,

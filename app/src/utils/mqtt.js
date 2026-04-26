@@ -1,4 +1,7 @@
 /*
+ * legacy: 新主流程已迁移到 `src/utils/realtime/mqtt-client.ts`。
+ * 该文件暂保留作参考，不再新增业务引用。
+ *
  * 模块职责：MQTT 客户端单例封装，为 uni-app 提供发布/订阅能力。
  *
  * 数据流：

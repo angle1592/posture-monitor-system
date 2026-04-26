@@ -11,7 +11,6 @@
  * - constants.ts 提供默认超时等协议参数，本模块负责网络交互与错误归一化。
  */
 
-import { DEVICE_DEFAULTS } from './constants'
 import { getMockDeviceStatus, getMockPropertyHistory, getMockRealtimeProperties } from './mockData'
 
 const CONFIG = {

@@ -7,7 +7,7 @@
 ```
 ┌──────────────┐    UART/JSON     ┌──────────────┐   MQTT/OneNET   ┌──────────────┐
 │  K230 Vision │ ──────────────→  │    ESP32-S3   │ ←────────────→  │  OneNET Cloud │
-│  YOLOv8n-pose│   115200 baud    │  Gateway+UI   │                │               │
+│  YOLOv8n-pose│   9600 baud    │  Gateway+UI   │                │               │
 │  (MicroPython)│                 │  (Arduino C++) │                └───────┬───────┘
 └──────────────┘                  └──────────────┘                        │
                                                                     HTTP / MQTT
@@ -38,7 +38,7 @@ refactored/
 - **输出**: 通过 UART 向 ESP32 发送 JSON 帧 (posture_type, confidence, is_abnormal)
 - **技术栈**: MicroPython (CanMV), nncase_runtime, K230 NPU
 
-### ESP32-S3 Gateway (`esp32/`)
+### ESP32-S3 Gateway (`posture_monitor/`)
 - **功能**: 系统网关 — 接收 K230 数据、驱动本地告警、同步云端状态
 - **外设**: SSD1306 OLED, WS2812 LED, SYN-6288 语音模块, EC11 编码器, 蜂鸣器
 - **通信**: UART (K230), WiFi/MQTT (OneNET), I2C (OLED)
@@ -52,7 +52,7 @@ refactored/
 ## 共享协议
 
 三端通过 `shared/protocol/` 共享统一的协议常量：
-- **姿势类型**: `normal`, `head_down`, `hunchback`, `tilt`, `no_person`
+- **姿势类型**: `normal`, `head_down`, `hunchback`, `unknown`, `no_person`
 - **系统模式**: `0=posture`, `1=clock`, `2=timer`
 - **告警掩码**: `bit0=LED`, `bit1=Buzzer`, `bit2=Voice`
 
@@ -65,7 +65,7 @@ refactored/
 - ESP32 接线文档：`refactored/posture_monitor/docs/hardware-wiring.md`
 - K230 引脚文档：`refactored/k230/docs/k230-pinout.md`
 
-产品文档按领域存放：系统级文档放在 `refactored/docs/`，子系统专属文档放在各自子目录的 `docs/`，图表原稿与导出图放在工作区根目录 `diagrams/`。
+产品文档按领域存放：系统级文档放在 `refactored/docs/`，子系统专属文档放在各自子目录的 `docs/`。
 
 ## 开发指南
 
@@ -76,7 +76,7 @@ refactored/
 
 ### ESP32 编译
 ```bash
-# 使用 Arduino IDE 或 PlatformIO 编译 esp32/ 目录下的固件
+# 使用 Arduino IDE 或 PlatformIO 编译 posture_monitor/ 目录下的固件
 ```
 
 ### App 开发

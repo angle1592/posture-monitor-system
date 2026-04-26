@@ -312,6 +312,7 @@ async function switchMode(mode: string) {
   }
 
   store.state.currentMode = mode
+  await store.confirmDeviceSync()
   saveSettings()
 }
 
@@ -344,6 +345,7 @@ async function toggleReminder(value: string) {
     await syncVoiceCompat(selectedReminders.value.includes('voice'))
   }
 
+  await store.confirmDeviceSync()
   saveSettings()
 }
 
@@ -365,6 +367,7 @@ async function onTimerSwitch(e: unknown) {
     return
   }
 
+  await store.confirmDeviceSync()
   saveSettings()
 }
 
@@ -389,6 +392,7 @@ async function onIntervalChange(e: unknown) {
     return
   }
 
+  await store.confirmDeviceSync()
   saveSettings()
 }
 
@@ -412,6 +416,7 @@ async function runHardwareSelfTest() {
     return
   }
 
+  await store.confirmDeviceSync()
   uni.showToast({ title: '已触发自检', icon: 'success' })
 }
 

@@ -7,7 +7,6 @@
 - 文档按领域存放，不做全量集中。
 - 产品总入口放在 `refactored/docs/`。
 - 子系统专属文档放在各自子目录的 `docs/` 中。
-- 图表原稿与导出图继续放在工作区根目录 `diagrams/`。
 
 ## 系统级文档
 
@@ -34,11 +33,6 @@
 - 子项目入口：`refactored/app/README.md`
 - OneNET 物模型：`refactored/app/docs/onenet-property-model.md`
 - OneNET API：`refactored/app/docs/api/oneNet-api.md`
-
-## 图表
-
-- 硬件拓扑图原稿：`diagrams/fig3-1_hardware_topology.drawio`
-- 硬件拓扑图导出：`diagrams/png/fig3-1_hardware_topology.png`
 
 ## 命名规范
 

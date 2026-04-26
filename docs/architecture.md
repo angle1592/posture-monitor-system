@@ -23,9 +23,9 @@
                               └────────┬─────────┘
                                        │
                                        │ UART/JSON
-                                       │ 115200 baud
-                                       │ TX:GPIO3 → RX:GPIO18
-                                       │ RX:GPIO4 ← TX:GPIO17
+                                       │ 9600 baud
+                                       │ TX:GPIO3 → RX:GPIO16
+                                       │ RX:GPIO4 ← TX:GPIO15
                                        ▼
 ┌──────────────────────────────────────────────────────────────────────────────────┐
 │                              ESP32-S3 主控模块 (Arduino C++)                      │
@@ -68,7 +68,7 @@
 | 子项目 | 目录 | 核心职责 | 技术栈 |
 |--------|------|----------|--------|
 | K230 视觉模块 | `k230/` | 摄像头采集、姿态检测、坐姿分析、UART 发送检测结果 | MicroPython, YOLOv8n-pose, nncase_runtime |
-| ESP32 主控模块 | `esp32/` | 接收 K230 数据、MQTT 云端通信、本地报警、用户交互 | Arduino C++, PubSubClient, U8g2 |
+| ESP32 主控模块 | `posture_monitor/` | 接收 K230 数据、MQTT 云端通信、本地报警、用户交互 | Arduino C++, PubSubClient, U8g2 |
 | 手机 App | `app/` | 远程监控、历史数据查看、设备参数配置 | UniApp, Vue3, TypeScript |
 
 当前 K230 视觉端采用 5 个关键点的几何规则判定路径。算法以图像坐标系为参考，使用双肩中点与双髋中点连线相对竖直方向的夹角识别驼背，使用鼻子与双肩中点连线相对竖直方向的夹角识别低头；关键点不齐全时输出 `unknown`。
@@ -102,23 +102,23 @@
 ### 2.2 物理连接与引脚对照
 | 通道 | K230 侧 | ESP32 侧 | 说明 |
 |------|---------|----------|------|
-| UART TX | `uart_tx_pin=3` | `K230_UART_RX_PIN=18` | K230 发数据到 ESP32 |
-| UART RX | `uart_rx_pin=4` | `K230_UART_TX_PIN=17` | ESP32 可回发控制/调试 |
-| UART 波特率 | `uart_baudrate=115200` | `K230_UART_BAUD=115200` | 两端必须严格一致 |
+| UART TX | `uart_tx_pin=3` | `K230_UART_RX_PIN=16` | K230 发数据到 ESP32 |
+| UART RX | `uart_rx_pin=4` | `K230_UART_TX_PIN=15` | ESP32 可回发控制/调试 |
+| UART 波特率 | `uart_baudrate=9600` | `K230_UART_BAUD=9600` | 两端必须严格一致 |
 | 外设 | ESP32 引脚 | 作用 |
 |------|-----------|------|
 | WS2812 | `GPIO48` | 状态灯（联网/异常/提醒） |
 | 蜂鸣器 | `GPIO6` | 脉冲提示与告警 |
 | 语音模块 TX | `GPIO41` | 向 SYN-6288 发送播报数据 |
 | OLED SDA/SCL | `GPIO1/GPIO2` | I2C 显示 |
-| EC11 S1/S2/KEY | `GPIO9/GPIO10/GPIO11` | 模式切换与按键输入 |
+| EC11 S1/S2/KEY | `GPIO9/GPIO10/GPIO21` | 模式切换与按键输入 |
 ### 2.3 通信链路分层
 ```
 K230 摄像头帧
    |
    | 视觉推理 + 姿态判定
    v
-K230 JSON 帧（UART, 115200）
+K230 JSON 帧（UART, 9600）
    |
    | posture_type
    v
@@ -172,7 +172,7 @@ App 不直接操作 MQTT，而是走 OneNET HTTP：
 ---
 ## 3. ESP32 固件架构
 ### 3.1 模块拆分与主入口
-ESP32 主程序位于 `esp32/posture_monitor.ino`，其职责不是“做所有事情”，而是“调度各模块”：
+ESP32 主程序位于 `posture_monitor/posture_monitor.ino`，其职责不是“做所有事情”，而是“调度各模块”：
 | 模块 | 文件 | 职责 |
 |------|------|------|
 | 配置层 | `config.h` | 引脚、主题、阈值、开关、网络参数 |
@@ -307,7 +307,7 @@ ESP32 使用两个独立状态机：
 | 字段 | 初始值来源 | 说明 |
 |------|------------|------|
 | `alertModeMask` | `ALERT_MODE_LED|BUZZER|VOICE` | 控制提醒输出通道 |
-| `cooldownMs` | `ALERT_COOLDOWN_MS=30000` | 告警冷却窗口 |
+| `cooldownMs` | `ALERT_COOLDOWN_MS=5000` | 告警冷却窗口 |
 | `timerDurationSec` | `TIMER_DEFAULT_DURATION_SEC=1500` | 番茄钟时长 |
 | `cfgVersion` | 初始 `1` | 每次配置更新自增 |
 ### 3.8 告警输出位掩码
@@ -327,7 +327,7 @@ ESP32 使用两个独立状态机：
 | OneNET | `ONENET_DEVICE_NAME` | `main` |
 | 周期 | `PUBLISH_INTERVAL_MS` | `10000` |
 | 超时 | `K230_TIMEOUT_MS` | `5000` |
-| 冷却 | `ALERT_COOLDOWN_MS` | `30000` |
+| 冷却 | `ALERT_COOLDOWN_MS` | `5000` |
 | 定时器 | `TIMER_DEFAULT_DURATION_SEC` | `1500` |
 | 定时器上限 | `TIMER_MAX_DURATION_SEC` | `7200` |
 | 异常阈值 | `ABNORMAL_THRESHOLD_FRAMES` | `15` |
@@ -355,10 +355,10 @@ K230 是系统的“感知端”，输出的是“结构化姿态信息”，而
 | `camera_pixformat` | `RGBP888` | AI 输入像素格式 |
 | `detection_interval` | `120` ms | 检测循环间隔 |
 | `uart_id` | `1` | 串口编号 |
-| `uart_baudrate` | `115200` | 串口波特率 |
+| `uart_baudrate` | `9600` | 串口波特率 |
 | `uart_tx_pin/uart_rx_pin` | `3/4` | 串口引脚 |
 | `no_person_reset_frames` | `5` | 连续无人后重置异常状态 |
-| `stable_frame_count` | `1` | 同一类别连续出现多少帧后才确认输出 |
+| `stable_frame_count` | `3` | 同一类别连续出现多少帧后才确认输出 |
 ### 4.4 姿态标签映射策略
 在 `main.py` 中，K230 直接输出最终姿态类别：
 - `normal`
@@ -464,7 +464,7 @@ App 不只看一个接口：
 ### 6.3 配置一致性检查清单
 每次改协议或改参数时，至少检查以下同步点：
 1. `shared/protocol/schemas.json` 字段名是否变化。
-2. `esp32/config.h` 的 `PROP_ID_*` 是否同步。
+2. `posture_monitor/config.h` 的 `PROP_ID_*` 是否同步。
 3. `app/src/utils/constants.ts` 的 `PROP_IDS` 是否同步。
 4. K230 输出字段是否仍满足 `K230UartFrame.required`。
 5. OneNET 物模型 identifier 是否与代码一致。
@@ -483,7 +483,7 @@ App 不只看一个接口：
 | 现象 | 优先排查 |
 |------|----------|
 | App 一直离线 | `device/detail` 的 `status` 与 `last_time`；token 是否有效 |
-| ESP32 无姿态数据 | UART 引脚是否 `3/4 <-> 18/17`，波特率是否 `115200` |
+| ESP32 无姿态数据 | UART 引脚是否 `3/4 <-> 16/15`，波特率是否 `9600` |
 | 频繁误报警 | K230 阈值 + ESP32 `cooldownMs` + `ABNORMAL_THRESHOLD_FRAMES` |
 | 云端设置不生效 | identifier 拼写、`property/set` 是否命中、`set_reply` 是否返回 |
 ### 6.6 版本演进建议
@@ -503,7 +503,7 @@ App 不只看一个接口：
 ## 7. 开发指南
 本项目建议按“协议先行、三端同步、端到端验证”的顺序开发。
 1. 先修改 `shared/protocol/schemas.json` 与三端常量文件。
-2. 再实现 `esp32/` 的解析、状态机与 MQTT 上报。
+2. 再实现 `posture_monitor/` 的解析、状态机与 MQTT 上报。
 3. 然后实现 `k230/` 的检测输出与字段对齐。
 4. 最后实现 `app/` 的展示、控制与轮询策略。
 每次改动后，至少完成 UART 联调、MQTT 回执检查、App 在线状态核对三项验收。

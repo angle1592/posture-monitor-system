@@ -12,9 +12,9 @@
 // ============================================================
 // UART Configuration (K230 -> ESP32)
 // ============================================================
-#define PROTO_UART_BAUDRATE       115200
-#define PROTO_K230_TX_PIN         17
-#define PROTO_K230_RX_PIN         18
+#define PROTO_UART_BAUDRATE       9600
+#define PROTO_K230_TX_PIN         15
+#define PROTO_K230_RX_PIN         16
 
 // ============================================================
 // K230 UART JSON Field Names
@@ -87,7 +87,7 @@
 #define DEFAULT_PUBLISH_INTERVAL_MS     10000
 #define DEFAULT_K230_TIMEOUT_MS         5000
 #define DEFAULT_ABNORMAL_THRESHOLD      15
-#define DEFAULT_ALERT_COOLDOWN_MS       30000
+#define DEFAULT_ALERT_COOLDOWN_MS       5000
 #define DEFAULT_TIMER_DURATION_SEC      1500
 
 #endif // SHARED_PROTOCOL_CONSTANTS_H
