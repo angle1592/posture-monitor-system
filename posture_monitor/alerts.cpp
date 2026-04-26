@@ -127,7 +127,7 @@ bool alerts_voiceEnabled() {
 void alerts_update(bool mqttConnected, bool personPresent, bool shouldAlert) {
 #if ENABLE_BUZZER
     if (_buzzerActive && millis() >= _buzzerUntilMs) {
-        // 到时关闭蜂鸣器，形成“非阻塞脉冲”。
+        // 到时关闭蜂鸣器，形成"非阻塞脉冲"。
         _buzzerActive = false;
         digitalWrite(BUZZER_PIN, LOW);
     }

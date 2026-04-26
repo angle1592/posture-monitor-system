@@ -67,15 +67,15 @@
 #define EC11_S2_PIN         10  // 模块 S2（编码器 B 相）
 #define EC11_KEY_PIN        21  // 模块 KEY（按键）
 
-// --- 人体存在传感器（PIR / 对射式红外，可切换） ---
+// --- 人体存在传感器（支持 PIR / 对射式红外） ---
 #define PERSON_SENSOR_PIR         1
 #define PERSON_SENSOR_BEAM_BREAK  2
 
-#define PERSON_SENSOR_TYPE        PERSON_SENSOR_PIR
-#define PERSON_SENSOR_PIN         4       // 当前人体存在传感器输入引脚
-#define PERSON_SENSOR_ACTIVE_LEVEL LOW    // 对射式默认：LOW=挡住/有人
-#define PERSON_SENSOR_WARMUP_MS   30000UL // PIR 预热时间；对射式可设为 0
-#define PERSON_SENSOR_HOLD_MS     5000UL  // PIR 检测后保持时间；对射式建议设为 0
+#define PERSON_SENSOR_TYPE        PERSON_SENSOR_BEAM_BREAK
+#define PERSON_SENSOR_PIN         4    // 当前对射式人体存在传感器输入引脚
+#define PERSON_SENSOR_ACTIVE_LEVEL LOW // 挡住光路/有人时的有效电平
+#define PERSON_SENSOR_WARMUP_MS   0UL  // 对射式无需预热；PIR 可改回非 0
+#define PERSON_SENSOR_HOLD_MS     0UL  // 对射式按实时状态判定；PIR 可配置保持时间
 
 // 旧宏名保留到主逻辑全面切换完成。
 #define PIR_PIN             PERSON_SENSOR_PIN
@@ -91,7 +91,7 @@
 // --- 补光 LED ---
 #define ENABLE_FILL_LIGHT   1   // 0=禁用补光控制, 1=启用 GPIO 开关控制
 #define FILL_LIGHT_PIN      13  // 白光 LED 控制引脚（需串联限流电阻）
-#define FILL_LIGHT_LUX_THRESHOLD 20  // 低于该 lux 且 PIR=有人时打开补光
+#define FILL_LIGHT_LUX_THRESHOLD 20  // 低于该 lux 且人体在位时打开补光
 
 // --- SYN-6288 语音合成模块 ---
 #define VOICE_TX_PIN        41  // 语音模块 TX（ESP32 TX -> SYN6288 RX）

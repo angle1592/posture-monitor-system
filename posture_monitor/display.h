@@ -41,7 +41,7 @@
 
 // 更新连接状态（WiFi/MQTT），供下次渲染使用。
 void display_setConnectivity(bool wifiConnected, bool mqttConnected);
-void display_setSensorStatus(bool pirReady, bool personPresent, bool lightReady, int lightLux);
+void display_setSensorStatus(bool presenceReady, bool personPresent, bool lightReady, int lightLux);
 // 更新定时器剩余时间和运行状态，供定时器页面显示。
 void display_setTimerStatus(int remainSec, int totalSec, int timerState, bool adjustMode);
 // 初始化 OLED 与绘图库（若启用）。

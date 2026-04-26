@@ -69,8 +69,8 @@ typedef struct {
     bool postureKnown;
     bool shouldAlert;
     bool fillLightOn;
-    bool pirPresent;
-    bool pirReady;
+    bool presencePresent;
+    bool presenceReady;
     int ambientLux;
     bool k230TimedOut;
     bool k230DataValid;
@@ -279,7 +279,7 @@ void loop() {
         lastDisplayTime = now;
 
         display_setConnectivity(WiFi.status() == WL_CONNECTED, mqttOk);
-        display_setSensorStatus(fused.pirReady, fused.pirPresent, sensors_isLightSensorReady(), fused.ambientLux);
+        display_setSensorStatus(fused.presenceReady, fused.presencePresent, sensors_isLightSensorReady(), fused.ambientLux);
         
         // 读取定时器状态并映射到显示层状态机，确保界面与逻辑状态一致。
         TimerState tState = timer_getState();
@@ -1050,7 +1050,7 @@ void refreshDisplayForTest() {
     const K230Data* data = k230_getData();
     FusedPostureState fused = evaluateFusedPostureState(data, millis());
     display_setConnectivity(WiFi.status() == WL_CONNECTED, mqttClient.connected());
-    display_setSensorStatus(fused.pirReady, fused.pirPresent, sensors_isLightSensorReady(), fused.ambientLux);
+    display_setSensorStatus(fused.presenceReady, fused.presencePresent, sensors_isLightSensorReady(), fused.ambientLux);
     display_update(mode_getCurrent(), fusedPostureLabel(fused.postureType), fused.fillLightOn);
 }
 
@@ -1321,7 +1321,7 @@ FusedPostureState evaluateFusedPostureState(const K230Data* data, unsigned long 
         strcmp(posture, "hunchback") == 0
     );
 
-    if (state.pirPresent && !state.k230TimedOut && state.k230DataValid && k230AcceptsPosture) {
+    if (state.presencePresent && !state.k230TimedOut && state.k230DataValid && k230AcceptsPosture) {
         state.personPresent = true;
         state.postureKnown = true;
 
@@ -1336,7 +1336,7 @@ FusedPostureState evaluateFusedPostureState(const K230Data* data, unsigned long 
         }
     }
 
-    state.fillLightOn = state.pirPresent && state.ambientLux < FILL_LIGHT_LUX_THRESHOLD;
+    state.fillLightOn = state.presencePresent && state.ambientLux < FILL_LIGHT_LUX_THRESHOLD;
     return state;
 }
 

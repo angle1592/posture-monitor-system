@@ -19,7 +19,7 @@
 static bool _displayReady = false;
 static bool _displayWifiConnected = false;
 static bool _displayMqttConnected = false;
-static bool _displayPirReady = true;
+static bool _displayPresenceReady = true;
 static bool _displayPersonPresent = true;
 static bool _displayLightReady = true;
 static int _displayLightLux = 2000;
@@ -48,8 +48,8 @@ void display_setConnectivity(bool wifiConnected, bool mqttConnected) {
     _displayMqttConnected = mqttConnected;
 }
 
-void display_setSensorStatus(bool pirReady, bool personPresent, bool lightReady, int lightLux) {
-    _displayPirReady = pirReady;
+void display_setSensorStatus(bool presenceReady, bool personPresent, bool lightReady, int lightLux) {
+    _displayPresenceReady = presenceReady;
     _displayPersonPresent = personPresent;
     _displayLightReady = lightReady;
     _displayLightLux = lightLux;
@@ -102,7 +102,7 @@ void display_update(int mode, const char* postureLabel, bool fillLightOn) {
         _u8g2.drawUTF8(72, 31, (postureLabel != NULL && postureLabel[0] != '\0') ? postureLabel : "无人");
 
         _u8g2.setFont(u8g2_font_wqy12_t_gb2312);
-        snprintf(line, sizeof(line), "人体:%s", (_displayPirReady && _displayPersonPresent) ? "有人" : "无人");
+        snprintf(line, sizeof(line), "人体:%s", (_displayPresenceReady && _displayPersonPresent) ? "有人" : "无人");
         _u8g2.drawUTF8(0, 47, line);
         snprintf(line, sizeof(line), "补光:%s", fillLightOn ? "开" : "关");
         _u8g2.drawUTF8(68, 47, line);

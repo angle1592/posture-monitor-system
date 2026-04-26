@@ -2,7 +2,7 @@
  * @file sensors.h
  * @brief 传感器模块 — 人体存在传感器 + 光敏传感器
  * 
- * 人体存在传感器：支持 PIR 或对射式红外（数字量）
+ * 人体存在传感器：支持对射式红外或 PIR（数字量）
  * 光敏：检测环境光线强度（BH1750 lux，GPIO1/GPIO2 I2C）
  * 
  * 当 ENABLE_PIR = 0 / ENABLE_LIGHT_SENSOR = 0 时，对应函数为 stub。
@@ -15,10 +15,10 @@
 #define SENSORS_H
 
 /**
- * @brief 传感器采集模块（PIR + 光照，可选）
+ * @brief 传感器采集模块（人体存在 + 光照，可选）
  *
  * 模块职责：
- * - 管理 PIR 人体红外与 BH1750 光照传感器的初始化和周期采样。
+ * - 管理人体存在传感器与 BH1750 光照传感器的初始化和周期采样。
  * - 对上层提供统一读数接口，屏蔽硬件启用/禁用差异。
  *
  * 对外提供的核心 API：
@@ -28,11 +28,11 @@
  *
  * 依赖关系：
  * - Arduino GPIO/ADC 读写接口
- * - config.h（ENABLE_PIR、ENABLE_LIGHT_SENSOR 与引脚定义）
+ * - config.h（ENABLE_PIR、ENABLE_LIGHT_SENSOR 与传感器引脚定义）
  * - utils.h（日志输出）
  *
  * 是否可选：
- * - PIR 受 ENABLE_PIR 控制。
+ * - 人体存在传感器受 ENABLE_PIR 控制。
  * - 光照传感器受 ENABLE_LIGHT_SENSOR 控制。
  * - 未启用时返回安全默认值，保证主流程可运行。
  */
@@ -80,7 +80,7 @@ bool sensors_isPresenceReady();
 bool sensors_isPresencePresent();
 
 /**
- * @brief 旧接口兼容包装：PIR 是否已结束预热
+ * @brief 旧接口兼容包装：人体存在传感器是否已结束预热
  * @return true 预热完成或人体存在传感器未启用
  */
 bool sensors_isPirReady();

@@ -9,7 +9,7 @@
  *
  * 实现要点：
  * - 根据 ENABLE_PIR / ENABLE_LIGHT_SENSOR 分别编译真实采样或 stub 路径。
- * - 人体存在传感器支持 PIR 与对射式红外两种模式。
+ * - 人体存在传感器支持对射式红外与 PIR 两种模式。
  * - 采样逻辑保持轻量：存在传感器读数字电平，BH1750 读 I2C lux。
  * - 对上层始终返回可用数据，避免可选硬件缺失时主流程中断。
  *
@@ -39,7 +39,7 @@ void _updatePirPresence(unsigned long now) {
     if (!_presenceReady) {
         if (now - _presenceBootMs >= PERSON_SENSOR_WARMUP_MS) {
             _presenceReady = true;
-            LOGI("人体存在传感器预热完成 (PIR)");
+            LOGI("人体存在传感器预热完成 (PIR 模式)");
         } else {
             _presencePresent = true;
             return;

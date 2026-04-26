@@ -8,7 +8,7 @@ This document provides coding guidelines for agentic AI assistants working on th
 
 **Platform**: ESP32-S3 (Freenove ESP32-S3 WROOM Board)
 **Framework**: Arduino
-**Hardware**: K230 Vision Module + WS2812 LED + Optional OLED/EC11/PIR/Voice
+**Hardware**: K230 Vision Module + WS2812 LED + Optional OLED/EC11/Presence Sensor/Voice
 **Cloud**: OneNET MQTT Platform
 
 ---
@@ -57,7 +57,7 @@ posture_monitor/
 ├── k230_parser.h / .cpp      # K230 UART data parsing
 ├── mode_manager.h / .cpp     # System mode switching (EC11 encoder)
 ├── display.h / .cpp          # OLED display (optional)
-├── sensors.h / .cpp          # PIR + light sensors (optional)
+├── sensors.h / .cpp          # Presence sensor + light sensors (optional)
 ├── voice.h / .cpp            # SYN-6288 voice synthesis (optional)
 └── alerts.h / .cpp           # WS2812 LED + buzzer alerts
 ```
