@@ -40,7 +40,7 @@ ESP32 -> MQTT -> OneNET（保留设备通信）
 1. 阿里云服务器安装 MySQL（yum 或 Docker）
 2. 创建数据库 `posture_monitor`
 3. 建表 `posture_records`
-4. 安全组开放 3306（仅开发阶段，生产用 SSH 隧道或 localhost）
+4. MySQL 只监听 localhost，App 只访问 FastAPI
 
 **表结构：**
 
@@ -49,12 +49,14 @@ CREATE DATABASE posture_monitor CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
 
 CREATE TABLE posture_records (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    device_id VARCHAR(64) NOT NULL DEFAULT 'default',
+    device_id VARCHAR(64) NOT NULL DEFAULT 'main',
     posture_type VARCHAR(20) NOT NULL,       -- normal/head_down/hunchback/no_person/unknown
     person_present BOOLEAN DEFAULT FALSE,
-    is_posture BOOLEAN DEFAULT TRUE,
+    ambient_lux FLOAT NULL,
+    fill_light_on BOOLEAN DEFAULT FALSE,
     onenet_time DATETIME(3) NOT NULL,        -- OneNET 原始时间戳
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_device_time (device_id, onenet_time),
     INDEX idx_device_time (device_id, onenet_time),
     INDEX idx_created (created_at)
 );
@@ -64,7 +66,7 @@ CREATE TABLE posture_records (
 
 - [ ] 服务器本地 `mysql -u root -p` 能登录
 - [ ] 手动 INSERT 一条数据，SELECT 能查到
-- [ ] （可选）远程 MySQL 客户端能连上
+- [ ] MySQL 只允许本机连接，公网不开放 3306
 
 ---
 
