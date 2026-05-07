@@ -12,7 +12,6 @@ from ..schemas import (
     DeviceStatusOut,
     HistoryRecordOut,
     PostureRecordOut,
-    TestInsertResponse,
     WeekTrendDayOut,
 )
 from ..services.onenet import query_device_status
@@ -25,30 +24,6 @@ CN = ZoneInfo("Asia/Shanghai")
 ABNORMAL_TYPES = {"head_down", "hunchback"}
 HEALTHY_TYPES = {"normal"}
 # 无人、未知不计入评分
-
-
-def china_now() -> datetime:
-    return datetime.now(CN).replace(tzinfo=None)
-
-
-@router.post("/test/insert", response_model=TestInsertResponse)
-def insert_test_record(db: Session = Depends(get_db)) -> TestInsertResponse:
-    record = PostureRecord(
-        device_id="main",
-        posture_type="normal",
-        person_present=True,
-        ambient_lux=120.0,
-        fill_light_on=False,
-        onenet_time=china_now(),
-    )
-    db.add(record)
-    try:
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise HTTPException(status_code=409, detail="duplicate test record")
-    db.refresh(record)
-    return TestInsertResponse(id=record.id, message="inserted")
 
 
 @router.get("/posture/latest", response_model=PostureRecordOut)

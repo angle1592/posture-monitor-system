@@ -16,11 +16,6 @@ class PostureRecordOut(BaseModel):
     created_at: datetime
 
 
-class TestInsertResponse(BaseModel):
-    id: int
-    message: str
-
-
 class HistoryRecordOut(BaseModel):
     """历史记录（和 PostureRecordOut 相同结构，语义区分）。"""
 

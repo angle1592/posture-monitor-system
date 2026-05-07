@@ -1,0 +1,17 @@
+[Unit]
+Description=Posture Monitor FastAPI Backend
+After=network.target mariadb.service
+Wants=mariadb.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/tmp/hermes-work/posture-monitor-system/server
+ExecStart=/tmp/hermes-work/posture-monitor-system/server/venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=5
+Environment=PATH=/tmp/hermes-work/posture-monitor-system/server/venv/bin:/usr/local/bin:/usr/bin
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
