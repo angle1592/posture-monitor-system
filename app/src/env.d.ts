@@ -4,7 +4,6 @@ interface ImportMetaEnv {
   readonly VITE_ONENET_PRODUCT_ID: string
   readonly VITE_ONENET_DEVICE_NAME: string
   readonly VITE_ONENET_TOKEN: string
-  readonly VITE_USE_MOCK_HISTORY?: string
   readonly VITE_MQTT_ENABLED?: string
   readonly VITE_MQTT_HOST?: string
   readonly VITE_MQTT_PORT?: string

@@ -11,8 +11,6 @@
  * - constants.ts 提供默认超时等协议参数，本模块负责网络交互与错误归一化。
  */
 
-import { getMockDeviceStatus, getMockPropertyHistory, getMockRealtimeProperties } from './mockData'
-
 const CONFIG = {
   // 物模型相关接口基地址：查询属性/历史、设置属性。
   thingmodelBase: 'https://iot-api.heclouds.com/thingmodel',
@@ -23,8 +21,6 @@ const CONFIG = {
   deviceName: import.meta.env.VITE_ONENET_DEVICE_NAME || '',
   token: import.meta.env.VITE_ONENET_TOKEN || '',
 }
-
-const USE_MOCK_HISTORY = String(import.meta.env.VITE_USE_MOCK_HISTORY ?? '').trim() === 'true'
 
 // ===== 类型定义 =====
 
@@ -132,10 +128,6 @@ function qs(params: Record<string, string | number>): string {
  * 返回: PropertyItem[] (data直接是数组)
  */
 export async function queryDeviceProperty(): Promise<PropertyItem[] | null> {
-  if (USE_MOCK_HISTORY) {
-    return getMockRealtimeProperties()
-  }
-
   try {
     // 端点：GET /thingmodel/query-device-property
     // 返回：属性数组；异常时返回 null，交由上层走兜底逻辑。
@@ -215,10 +207,6 @@ export async function queryPropertyHistory(
   identifier: string,
   days: number = 7
 ): Promise<HistoryDataPoint[]> {
-  if (USE_MOCK_HISTORY) {
-    return getMockPropertyHistory(identifier, days)
-  }
-
   try {
     // 端点：GET /thingmodel/query-device-property-history
     // 返回：{ list: HistoryDataPoint[] }；异常时返回空数组。
@@ -248,10 +236,6 @@ export async function queryPropertyHistory(
  * 返回: DeviceDetail (status=1表示在线, last_time=最后通信时间)
  */
 export async function queryDeviceStatus(): Promise<boolean> {
-  if (USE_MOCK_HISTORY) {
-    return getMockDeviceStatus()
-  }
-
   try {
     // 端点：GET /device/detail
     // 判定策略：status=1 且 last_time 未超时，才视为在线。
@@ -287,7 +271,6 @@ export function getConfig() {
     productId: CONFIG.productId,
     deviceName: CONFIG.deviceName,
     hasToken: !!CONFIG.token,
-    useMockHistory: USE_MOCK_HISTORY,
   }
 }
 
