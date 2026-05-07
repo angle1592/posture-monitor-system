@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
@@ -5,9 +7,18 @@ from sqlalchemy import text
 from .config import settings
 from .database import engine
 from .routers import posture
+from .services.sync import start_sync, stop_sync
 
 
-app = FastAPI(title=settings.app_name)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """FastAPI lifespan: 启动时开启后台同步，关闭时停止。"""
+    start_sync()
+    yield
+    stop_sync()
+
+
+app = FastAPI(title=settings.app_name, lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
