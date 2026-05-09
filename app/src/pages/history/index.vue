@@ -150,7 +150,7 @@
             </view>
           </view>
 
-          <canvas class="curve-canvas curve-canvas--week" canvas-id="weekTrendCanvas" id="weekTrendCanvas"></canvas>
+          <canvas class="curve-canvas curve-canvas--week" canvas-id="weekTrendCanvas" id="weekTrendCanvas" width="720" height="130"></canvas>
 
           <view class="curve-footer week-footer week-footer--ticks">
             <view
