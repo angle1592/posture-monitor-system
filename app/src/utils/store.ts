@@ -254,6 +254,10 @@ interface AppState {
   realtimeAvailable: boolean  // 当前是否有可用实时通道
   lastRealtimeMessageTime: number // 最近一条实时消息时间
 
+  // 后端每日统计
+  backendHealthScore: number | null  // 从后端获取的今日健康评分，null=未获取
+  lastBackendStatsTime: number       // 上次获取后端统计的时间戳
+
   // 加载/错误状态
   isLoading: boolean           // 当前是否正在拉取设备数据
   lastError: string | null     // 最近一次请求错误信息（用于页面提示或调试）
@@ -290,6 +294,9 @@ const state = reactive<AppState>({
   realtimeAvailable: false,
   lastRealtimeMessageTime: 0,
 
+  backendHealthScore: null,
+  lastBackendStatsTime: 0,
+
   isLoading: false,
   lastError: null,
 })
@@ -322,11 +329,20 @@ const postureType = computed(() => {
   return 'abnormal'
 })
 
-/** 今日健康评分 (0-100)，与历史页 count-based 算法一致 */
+/** 今日健康评分 (0-100)，优先用后端全天数据，与历史页一致 */
 const healthScore = computed(() => {
+  // 后端数据优先（基于全天记录，最准确）
+  if (state.backendHealthScore !== null) {
+    return state.backendHealthScore
+  }
+  // 轮询计次数之
   const tracked = state.todayNormalPolls + state.todayAbnormalPolls
-  if (tracked === 0) return 100
-  return Math.round((state.todayNormalPolls / tracked) * 100)
+  if (tracked > 0) {
+    return Math.round((state.todayNormalPolls / tracked) * 100)
+  }
+  // 分钟算法兜底
+  if (state.todayTotalMinutes === 0) return 100
+  return Math.round((state.todayGoodMinutes / state.todayTotalMinutes) * 100)
 })
 
 /** 最后更新时间文本 */
@@ -368,6 +384,7 @@ function init() {
   // 恢复“当天统计”与“控制设置”，用于首屏快速回显。
   loadLocalStats()
   loadLocalSettings()
+  fetchBackendHealthScore()
   console.log('[Store] 初始化完成')
 }
 
@@ -450,6 +467,10 @@ async function fetchLatest() {
     accumulateUsage(elapsedMs)
     state.lastCheckTime = now
     updateRealtimeAvailability(now)
+    // 每 60 秒刷新一次后端评分
+    if (Date.now() - state.lastBackendStatsTime > 60000) {
+      fetchBackendHealthScore()
+    }
   } catch (e: unknown) {
     state.lastError = getErrorMessage(e)
     state.isOnline = false
@@ -584,6 +605,29 @@ function loadLocalSettings() {
     }
   } catch (e) {
     console.error('[Store] 加载本地设置失败:', e)
+  }
+}
+
+/** 从后端获取今日健康评分 */
+function fetchBackendHealthScore() {
+  try {
+    const base = (import.meta.env.VITE_API_BASE_URL || 'http://47.119.146.203:8001').replace(/\/+$/, '')
+    uni.request({
+      url: `${base}/api/posture/stats/daily`,
+      method: 'GET',
+      success: (resp) => {
+        if (resp.statusCode >= 200 && resp.statusCode < 300) {
+          const data = resp.data as { health_score?: number }
+          if (typeof data.health_score === 'number') {
+            state.backendHealthScore = data.health_score
+            state.lastBackendStatsTime = Date.now()
+          }
+        }
+      },
+      fail: () => {},
+    })
+  } catch {
+    // uni.request 不可用时静默忽略
   }
 }
 
