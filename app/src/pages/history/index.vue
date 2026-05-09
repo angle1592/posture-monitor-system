@@ -483,6 +483,7 @@ async function fetchHistoryData() {
   }
 
   applySelectionStats()
+  renderHistoryCanvases(true)
 }
 
 function showDatePicker() {
