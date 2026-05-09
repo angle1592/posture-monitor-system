@@ -91,13 +91,12 @@ def daily_stats(
     start = datetime.combine(target, datetime.min.time())
     end = start + timedelta(days=1)
 
-    # 只取有人在座的评分记录（排除 no_person / unknown）
+    # 只取有评分记录（排除 no_person / unknown），与 weekly_trend 保持一致
     records = (
         db.query(PostureRecord)
         .filter(
             PostureRecord.onenet_time >= start,
             PostureRecord.onenet_time < end,
-            PostureRecord.person_present == True,
             PostureRecord.posture_type.in_(list(HEALTHY_TYPES | ABNORMAL_TYPES)),
         )
         .order_by(PostureRecord.onenet_time.asc())
