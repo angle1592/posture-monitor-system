@@ -150,7 +150,7 @@
             </view>
           </view>
 
-          <canvas class="curve-canvas curve-canvas--week" canvas-id="weekTrendCanvas" id="weekTrendCanvas" width="720" height="130"></canvas>
+          <canvas class="curve-canvas curve-canvas--week" canvas-id="weekTrendCanvas" id="weekTrendCanvas" width="500" height="130"></canvas>
 
           <view class="curve-footer week-footer week-footer--ticks">
             <view
@@ -498,9 +498,9 @@ function getRecordIcon(type: string): string {
 /** 底部日期标签的百分比位置，与 canvas 绘图的像素坐标对齐 */
 function weekTickStyle(index: number): Record<string, string> {
   const n = weekData.value.length
-  const canvasWidth = 720
+  const canvasWidth = 500
   const plotLeft = 24
-  const plotWidth = 652
+  const plotWidth = 450
   const step = n > 1 ? plotWidth / (n - 1) : 0
   const leftPct = ((plotLeft + step * index) / canvasWidth) * 100
   return { left: `${leftPct}%` }
@@ -514,7 +514,7 @@ function weekChartY(score: number): number {
 
 const weekChartPoints = computed(() => {
   const left = 24
-  const width = 652
+  const width = 450
   const step = weekData.value.length > 1 ? width / (weekData.value.length - 1) : 0
 
   return weekData.value.map((day, index) => ({
@@ -569,10 +569,10 @@ function drawChartCanvas(
   nodeRadius: number,
 ) {
   const context = uni.createCanvasContext(canvasId)
-  const width = 720
-  const height = 130
+  const w = 500
+  const h = 130
 
-  context.clearRect(0, 0, width, height)
+  context.clearRect(0, 0, w, h)
 
   context.setStrokeStyle('rgba(255, 255, 255, 0.08)')
   context.setLineWidth(1)
@@ -580,7 +580,7 @@ function drawChartCanvas(
     const y = weekChartY(score)
     context.beginPath()
     context.moveTo(24, y)
-    context.lineTo(width - 24, y)
+    context.lineTo(w - 24, y)
     context.stroke()
   })
 
