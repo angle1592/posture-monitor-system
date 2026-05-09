@@ -40,3 +40,4 @@ esp32/build/
 
 # === Temp files ===
 _copy_projects.ps1
+node_modules/
