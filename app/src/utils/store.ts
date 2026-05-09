@@ -608,18 +608,20 @@ function loadLocalSettings() {
   }
 }
 
-/** 从后端获取今日健康评分 */
+/** 从后端获取今日健康评分（走 weekly 接口，和历史页数据源一致） */
 function fetchBackendHealthScore() {
   try {
     const base = (import.meta.env.VITE_API_BASE_URL || 'http://47.119.146.203:8001').replace(/\/+$/, '')
+    const today = formatLocalDate(new Date())
     uni.request({
-      url: `${base}/api/posture/stats/daily`,
+      url: `${base}/api/posture/stats/weekly`,
       method: 'GET',
       success: (resp) => {
         if (resp.statusCode >= 200 && resp.statusCode < 300) {
-          const data = resp.data as { health_score?: number }
-          if (typeof data.health_score === 'number') {
-            state.backendHealthScore = data.health_score
+          const list = resp.data as Array<{ date: string; score: number | null }>
+          const todayEntry = list?.find((d) => d.date === today)
+          if (todayEntry && typeof todayEntry.score === 'number') {
+            state.backendHealthScore = todayEntry.score
             state.lastBackendStatsTime = Date.now()
           }
         }
