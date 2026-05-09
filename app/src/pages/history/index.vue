@@ -160,10 +160,11 @@
 
           <view class="curve-footer week-footer week-footer--ticks">
             <view
-              v-for="day in weekData"
+              v-for="(day, index) in weekData"
               :key="day.date"
               class="week-tick"
               :class="{ active: activeWeekDateKey === day.date }"
+              :style="weekTickStyle(index)"
               @click="selectDay(day)"
             >
               <text class="week-tick-label">{{ day.label }}</text>
@@ -521,6 +522,17 @@ function getRecordIcon(type: string): string {
   if (type === 'head_down') return '↓'
   if (type === 'hunchback') return '⌒'
   return '!'
+}
+
+/** 底部日期标签的百分比位置，与 canvas 绘图的像素坐标对齐 */
+function weekTickStyle(index: number): Record<string, string> {
+  const n = weekData.value.length
+  const canvasWidth = 720
+  const plotLeft = 24
+  const plotWidth = 652
+  const step = n > 1 ? plotWidth / (n - 1) : 0
+  const leftPct = ((plotLeft + step * index) / canvasWidth) * 100
+  return { left: `${leftPct}%` }
 }
 
 function weekChartY(score: number): number {
@@ -927,11 +939,14 @@ onShow(() => {
 }
 
 .week-footer--ticks {
-  gap: 0;
+  position: relative;
+  height: 80rpx;
 }
 
 .week-tick {
-  flex: 1;
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -939,6 +954,14 @@ onShow(() => {
   padding: 14rpx 0 4rpx;
   border-top: 2rpx solid rgba(148, 163, 184, 0.14);
   transition: all var(--duration-base);
+
+  &:first-child {
+    transform: translateX(0);
+  }
+
+  &:last-child {
+    transform: translateX(-100%);
+  }
 
   &.active {
     border-top-color: rgba(0, 240, 255, 0.92);
