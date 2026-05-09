@@ -459,7 +459,7 @@ function applySelectionStats() {
 
 async function fetchHistoryData() {
   try {
-    const history = await queryPropertyHistory(PROP_IDS.POSTURE_TYPE, 6)
+    const history = await queryPropertyHistory(PROP_IDS.POSTURE_TYPE, 7)
     historyPoints.value = history
       .slice()
       .sort((left, right) => {
@@ -648,8 +648,8 @@ onShow(() => {
   selectedBucketMinutes.value = 5
   weekData.value = buildFallbackWeekData()
   applySelectionStats()
-  fetchHistoryData()
-  renderHistoryCanvases()
+  // fetchHistoryData 完成后会自行渲染画布，避免中间态闪现估算数据
+  void fetchHistoryData()
 })
 </script>
 
@@ -1109,7 +1109,13 @@ onShow(() => {
   }
 
   &--mixed {
-    background: linear-gradient(90deg, rgba(0, 230, 118, 0.92) 0%, rgba(0, 230, 118, 0.92) 48%, rgba(255, 122, 89, 0.95) 52%, rgba(255, 122, 89, 0.95) 100%);
+    background: repeating-linear-gradient(
+      90deg,
+      rgba(0, 230, 118, 0.92) 0rpx,
+      rgba(0, 230, 118, 0.92) 8rpx,
+      rgba(255, 122, 89, 0.95) 8rpx,
+      rgba(255, 122, 89, 0.95) 16rpx
+    );
   }
 }
 
