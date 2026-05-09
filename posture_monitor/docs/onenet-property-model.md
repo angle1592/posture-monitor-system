@@ -12,7 +12,7 @@
 | `currentMode` | enum(int) | `0/1/2` | 设备模式：0=坐姿检测, 1=时钟, 2=定时器 |
 | `alertModeMask` | int | `0..7` | 报警方式位掩码：1=LED, 2=BUZZER, 4=VOICE |
 | `cooldownMs` | int | `1000..600000` | 在异常持续情况下的提醒冷却时间 |
-| `timerDurationSec` | int | `60..7200` | 定时器时长（秒） |
+| `timerDurationSec` | int | `1..7200` | 定时器时长（秒） |
 | `timerRunning` | bool | `true/false` | 定时器运行状态 |
 | `cfgVersion` | int | `>=1` | 本地配置版本号（递增） |
 | `selfTest` | int | `1..100000` | 自检触发命令（下发后执行语音/灯光/蜂鸣器测试） |
@@ -87,7 +87,7 @@ bit2 (4): VOICE
 ## 5. 参数校验规则（固件侧）
 
 - `cooldownMs` 越界自动夹紧到 `1000..600000`
-- `timerDurationSec` 越界自动夹紧到 `60..7200`
+- `timerDurationSec` 越界自动夹紧到 `1..7200`
 - `alertModeMask` 仅取低 3 位（`value & 0x07`）
 
 ## 6. 兼容说明（旧字段）

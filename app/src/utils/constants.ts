@@ -78,7 +78,7 @@ export const POLLING_INTERVALS = {
 
 // 设备通信默认值：在线超时、上报节奏、冷却时间、默认计时时长等基础参数。
 export const DEVICE_DEFAULTS = {
-  ONLINE_TIMEOUT_MS: 300000,       // 在线超时阈值（5分钟）
+  ONLINE_TIMEOUT_MS: 20000,        // 在线超时阈值（20秒，设备每10秒上报一次）
   PUBLISH_INTERVAL_MS: 10000,
   ALERT_COOLDOWN_MS: 5000,         // 与ESP32固件5000ms保持一致
   TIMER_DURATION_SEC: 1500,

@@ -60,10 +60,10 @@ static const uint8_t PACKET_WELCOME[] = {
     0xBB, 0xB6, 0xD3, 0xAD, 0xCA, 0xB9, 0xD3, 0xC3, 0xF6
 };
 
-static const uint8_t PACKET_ADJUST_POSTURE[] = {
-    0xFD, 0x00, 0x15, 0x01, 0x00,
+static const uint8_t PACKET_SIT_UP_STRAIGHT[] = {
+    0xFD, 0x00, 0x11, 0x01, 0x00,
     0x5B, 0x76, 0x38, 0x5D, 0x5B, 0x74, 0x33, 0x5D,
-    0xC7, 0xEB, 0xB5, 0xF7, 0xD5, 0xFB, 0xD7, 0xF8, 0xD7, 0xCB, 0x93
+    0xC7, 0xEB, 0xD7, 0xF8, 0xD6, 0xB1, 0x80
 };
 
 static const uint8_t PACKET_TIMER_DONE[] = {
@@ -98,9 +98,9 @@ static bool _voiceSendKnownPacketByText(const char* text) {
     if (strcmp(text, "欢迎使用") == 0) {
         packet = PACKET_WELCOME;
         packetLen = sizeof(PACKET_WELCOME);
-    } else if (strcmp(text, "请调整坐姿") == 0) {
-        packet = PACKET_ADJUST_POSTURE;
-        packetLen = sizeof(PACKET_ADJUST_POSTURE);
+    } else if (strcmp(text, "请坐直") == 0 || strcmp(text, "请调整坐姿") == 0) {
+        packet = PACKET_SIT_UP_STRAIGHT;
+        packetLen = sizeof(PACKET_SIT_UP_STRAIGHT);
     } else if (strcmp(text, "定时器结束") == 0) {
         packet = PACKET_TIMER_DONE;
         packetLen = sizeof(PACKET_TIMER_DONE);

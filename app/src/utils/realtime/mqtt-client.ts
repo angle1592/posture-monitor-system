@@ -38,9 +38,11 @@ function getBrokerUrl(currentConfig: RealtimeTransportConfig): string {
   return `${protocol}://${currentConfig.host}:${currentConfig.port}/mqtt`
 }
 
-async function loadMqttModule() {
+// #ifdef H5
+function loadMqttModule(): Promise<typeof import('mqtt')> {
   return import('mqtt')
 }
+// #endif
 
 export function initRealtimeClient(nextConfig: RealtimeTransportConfig) {
   config = nextConfig
@@ -119,7 +121,8 @@ export async function connectRealtime(): Promise<RealtimeConnectionState> {
   emitState('connecting')
 
   try {
-    const mqtt = await loadMqttModule()
+    // #ifdef H5
+    const mqttMod = await loadMqttModule()
     const options: IClientOptions = {
       clientId: config.clientId || undefined,
       username: config.username || undefined,
@@ -128,7 +131,7 @@ export async function connectRealtime(): Promise<RealtimeConnectionState> {
       connectTimeout: 30000,
     }
 
-    client = mqtt.connect(getBrokerUrl(config), options)
+    client = mqttMod.connect(getBrokerUrl(config), options)
 
     client.on('message', (topic, payload) => {
       emitMessage(topic, payload.toString())
@@ -155,6 +158,9 @@ export async function connectRealtime(): Promise<RealtimeConnectionState> {
       })
       client?.once('error', reject)
     })
+    // #else
+    emitState('unsupported')
+    // #endif
   } catch (error) {
     console.error('[Realtime] MQTT connect failed:', error)
     emitState('degraded')

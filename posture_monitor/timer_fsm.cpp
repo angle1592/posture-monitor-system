@@ -30,12 +30,15 @@ static AlertPolicyState _alertPolicyState = ALERT_POLICY_IDLE;
 static unsigned long _alertCooldownUntilMs = 0;
 
 static void _triggerTimerDoneReminder(unsigned long now) {
-    if ((alerts_getAlertMode() & ALERT_MODE_LED) != 0) {
+    uint8_t alertMode = alerts_getAlertMode();
+    if ((alertMode & ALERT_MODE_LED) != 0) {
         alerts_triggerIndicatorPulse(TIMER_DONE_LED_PULSE_MS, 64, 0, 0);
     }
-    alerts_triggerBuzzerPulse(BUZZER_PULSE_MS * 2);
-    if (alerts_voiceEnabled()) {
-        voice_speak("时间到了，时间到了");
+    if ((alertMode & ALERT_MODE_BUZZER) != 0) {
+        alerts_triggerBuzzerPulse(BUZZER_PULSE_MS * 2);
+    }
+    if ((alertMode & ALERT_MODE_VOICE) != 0) {
+        voice_speak("定时器结束");
     }
     _timerNextReminderMs = now + TIMER_DONE_REMINDER_INTERVAL_MS;
 }
@@ -129,7 +132,7 @@ void timer_alertPolicyTick(unsigned long now, bool monitoringEnabled, bool shoul
     // 冷却结束且仍异常：触发一次提醒，并开启下一轮冷却。
     alerts_triggerBuzzerPulse(BUZZER_PULSE_MS);
     if (alerts_voiceEnabled()) {
-        voice_speak("请调整坐姿");
+        voice_speak("请坐直");
     }
     _alertCooldownUntilMs = now + _runtimeCfg.cooldownMs;
     _alertPolicyState = ALERT_POLICY_COOLDOWN;
@@ -245,7 +248,7 @@ void timer_setAdjustMode(bool enabled) {
  */
 void timer_adjustDuration(int deltaMins) {
     long nextSec = (long)_runtimeCfg.timerDurationSec + (long)deltaMins * 60L;
-    if (nextSec < 60L) nextSec = 60L;
+    if (nextSec < TIMER_MIN_DURATION_SEC) nextSec = TIMER_MIN_DURATION_SEC;
     if (nextSec > TIMER_MAX_DURATION_SEC) nextSec = TIMER_MAX_DURATION_SEC;
     _runtimeCfg.timerDurationSec = (unsigned long)nextSec;
     _runtimeCfg.cfgVersion++;
@@ -291,7 +294,7 @@ void timer_setCooldownMs(unsigned long ms) {
  * @param sec 目标总时长（秒）
  */
 void timer_setTimerDurationSec(unsigned long sec) {
-    if (sec < 60) sec = 60;
+    if (sec < TIMER_MIN_DURATION_SEC) sec = TIMER_MIN_DURATION_SEC;
     if (sec > TIMER_MAX_DURATION_SEC) sec = TIMER_MAX_DURATION_SEC;
     _runtimeCfg.timerDurationSec = sec;
     _runtimeCfg.cfgVersion++;

@@ -106,18 +106,6 @@
               ></view>
             </view>
 
-            <view v-if="abnormalTimelineMarkers.length > 0" class="abnormal-marker-row">
-              <view
-                v-for="marker in abnormalTimelineMarkers"
-                :key="`${marker.leftPercent}-${marker.label}`"
-                class="abnormal-marker"
-                :style="{ left: `${marker.leftPercent}%` }"
-              >
-                <view class="abnormal-marker-tick"></view>
-                <text class="abnormal-marker-label">{{ marker.label }}</text>
-              </view>
-            </view>
-
             <view class="axis-row axis-row--timeline">
               <view
                 v-for="marker in detailAxisMarkers"
@@ -243,7 +231,7 @@ import StatCard from '@/components/ui/StatCard.vue'
 import { queryPropertyHistory } from '@/utils/oneNetApi'
 import type { HistoryDataPoint } from '@/utils/oneNetApi'
 import { formatLocalDate } from '@/utils/date'
-import { buildAbnormalTimelineMarkers, buildDetailSummaryText, buildDetailTimelineSegments, getVisibleHistoryRecords, hasHiddenHistoryRecords } from '@/utils/historyPage'
+import { buildDetailSummaryText, buildDetailTimelineSegments, getVisibleHistoryRecords, hasHiddenHistoryRecords } from '@/utils/historyPage'
 import type { DailyHistoryStats } from '@/utils/historyPage'
 import { DEVICE_DEFAULTS, PROP_IDS, POSTURE_TYPES } from '@/utils/constants'
 import {
@@ -471,7 +459,7 @@ function applySelectionStats() {
 
 async function fetchHistoryData() {
   try {
-    const history = await queryPropertyHistory(PROP_IDS.POSTURE_TYPE, 7)
+    const history = await queryPropertyHistory(PROP_IDS.POSTURE_TYPE, 6)
     historyPoints.value = history
       .slice()
       .sort((left, right) => {
@@ -580,8 +568,6 @@ const detailBandData = computed(() => {
 const detailAxisLabels = computed<AxisLabels>(() => detailBandData.value.axisLabels)
 
 const detailTimelineSegments = computed(() => buildDetailTimelineSegments(detailBandData.value.segments, 24, 696))
-
-const abnormalTimelineMarkers = computed(() => buildAbnormalTimelineMarkers(detailTimelineSegments.value, detailAxisLabels.value))
 
 const detailAxisMarkers = computed(() => ([
   { label: detailAxisLabels.value[0], leftPercent: 0 },
@@ -1088,38 +1074,6 @@ onShow(() => {
   margin-top: 12rpx;
 }
 
-.abnormal-marker-row {
-  position: relative;
-  height: 58rpx;
-  margin-top: 8rpx;
-}
-
-.abnormal-marker {
-  position: absolute;
-  top: 0;
-  transform: translateX(-50%);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8rpx;
-}
-
-.abnormal-marker-tick {
-  width: 2rpx;
-  height: 14rpx;
-  background: rgba(255, 122, 89, 0.75);
-}
-
-.abnormal-marker-label {
-  padding: 4rpx 12rpx;
-  border-radius: 999rpx;
-  background: rgba(255, 122, 89, 0.1);
-  border: 1rpx solid rgba(255, 122, 89, 0.22);
-  color: #ffb29d;
-  font-size: 20rpx;
-  line-height: 1;
-  white-space: nowrap;
-}
 
 .detail-timeline {
   position: relative;
@@ -1397,15 +1351,6 @@ onShow(() => {
   .detail-timeline {
     height: 168rpx;
     padding: 20rpx 18rpx 0;
-  }
-
-  .abnormal-marker-row {
-    height: 64rpx;
-  }
-
-  .abnormal-marker-label {
-    font-size: 18rpx;
-    padding: 4rpx 10rpx;
   }
 
   .detail-track,

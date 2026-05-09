@@ -416,15 +416,28 @@ bool jsonParseULong(const char* p, unsigned long* outValue) {
 
 /**
  * @brief 执行执行器自检（LED/蜂鸣器/语音）。
- * @details 临时强制开启所有提醒通道，验证硬件链路后再恢复原配置，避免污染运行态。
+ * @details 自检只触发当前 alertModeMask 启用的通道，便于 App 验证提醒方式开关是否真正生效。
  */
 void runActuatorSelfTest() {
-    LOGI("[SELFTEST] 执行语音/灯光/蜂鸣器自检");
+    uint8_t modeMask = timer_getConfig()->alertModeMask;
+    bool ledEnabled = (modeMask & ALERT_MODE_LED) != 0;
+    bool buzzerEnabled = (modeMask & ALERT_MODE_BUZZER) != 0;
+    bool voiceEnabled = (modeMask & ALERT_MODE_VOICE) != 0;
 
-    uint8_t oldMask = timer_getConfig()->alertModeMask;
-    alerts_setAlertMode(ALERT_MODE_LED | ALERT_MODE_BUZZER | ALERT_MODE_VOICE);
+    LOGI("[SELFTEST] 执行自检 mask=%u (led=%s, buzzer=%s, voice=%s)",
+         modeMask,
+         ledEnabled ? "on" : "off",
+         buzzerEnabled ? "on" : "off",
+         voiceEnabled ? "on" : "off");
 
-    alerts_lockIndicator(true, 0, 0, 48);
+    if (!ledEnabled && !buzzerEnabled && !voiceEnabled) {
+        LOGW("[SELFTEST] 所有提醒通道均已关闭，跳过输出");
+        return;
+    }
+
+    if (ledEnabled) {
+        alerts_lockIndicator(true, 0, 0, 48);
+    }
     alerts_triggerBuzzerPulse(BUZZER_MELODY_NOTE_MS);
     if (alerts_voiceEnabled()) {
         // 走正常语音接口（内部会优先匹配已验证可用的固定中文包）。
@@ -432,16 +445,21 @@ void runActuatorSelfTest() {
     }
     delay(BUZZER_MELODY_GAP_MS);
 
-    alerts_lockIndicator(true, 48, 0, 0);
+    if (ledEnabled) {
+        alerts_lockIndicator(true, 48, 0, 0);
+    }
     alerts_triggerBuzzerPulse(BUZZER_MELODY_NOTE_MS);
     delay(BUZZER_MELODY_GAP_MS);
 
-    alerts_lockIndicator(true, 0, 48, 0);
+    if (ledEnabled) {
+        alerts_lockIndicator(true, 0, 48, 0);
+    }
     // 第二段语音省略，避免 Busy 窗口内被跳过造成误判。
     delay(BUZZER_MELODY_GAP_MS);
 
-    alerts_lockIndicator(false, 0, 0, 0);
-    alerts_setAlertMode(oldMask);
+    if (ledEnabled) {
+        alerts_lockIndicator(false, 0, 0, 0);
+    }
 }
 
 /**
@@ -592,7 +610,7 @@ void processSerialTestCommand(const char* line) {
     if (strcmp(line, "test alert") == 0) {
         alerts_triggerBuzzerPulse(BUZZER_PULSE_MS);
         if (alerts_voiceEnabled()) {
-            voice_speak("请调整坐姿");
+            voice_speak("请坐直");
         }
         // 这里不直接改提醒策略内部状态，只做一次“立即输出”用于人工验证。
         // 这样可以避免测试命令污染正常运行中的冷却时序。
@@ -1173,6 +1191,7 @@ void handlePropertySet(const char* message) {
     // 提醒输出策略：LED/蜂鸣器/语音位掩码。
     if (jsonFindParamValueStart(message, PROP_ID_ALERT_MODE_MASK, &p) && jsonParseULong(p, &numValue)) {
         timer_setAlertModeMask((uint8_t)numValue);
+        timer_applyConfig();
         LOGI("  %s: %u", PROP_ID_ALERT_MODE_MASK, timer_getConfig()->alertModeMask);
         requestImmediatePublish();
     }
@@ -1211,6 +1230,7 @@ void handlePropertySet(const char* message) {
 
     // 自检触发字段只看“出现与否”，数值本身用于日志追踪来源。
     if (jsonFindParamValueStart(message, PROP_ID_SELF_TEST, &p) && jsonParseULong(p, &numValue)) {
+        timer_applyConfig();
         runActuatorSelfTest();
         LOGI("  %s: %lu", PROP_ID_SELF_TEST, numValue);
     }

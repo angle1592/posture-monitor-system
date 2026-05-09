@@ -430,7 +430,7 @@ async function fetchLatest() {
     applyProperties(props, now)
 
     const onlineByPropertyStream = inferOnlineFromProperties(props, now)
-    state.isOnline = status || onlineByPropertyStream
+    state.isOnline = props && props.length > 0 ? onlineByPropertyStream : status
     accumulateUsage(elapsedMs)
     state.lastCheckTime = now
     updateRealtimeAvailability(now)

@@ -138,14 +138,17 @@
       <view class="control-section">
         <view class="section-label">
           <text class="label-icon">◈</text>
-          <text class="label-text">久坐提醒</text>
+          <text class="label-text">定时器</text>
         </view>
         
         <view class="timer-card">
           <view class="timer-header">
             <view class="timer-title-wrap">
               <text class="timer-icon">⏳</text>
-              <text class="timer-title">定时提醒</text>
+              <view class="timer-title-content">
+                <text class="timer-title">倒计时提醒</text>
+                <text class="timer-status">{{ timerStatusText }}</text>
+              </view>
             </view>
             
             <switch
@@ -157,22 +160,66 @@
             />
           </view>
           
-          <view class="timer-body" :class="{ disabled: !timerEnabled || !store.state.isOnline }">
+          <view class="timer-body" :class="{ disabled: !store.state.isOnline }">
             <view class="timer-row">
-              <text class="row-label">提醒间隔</text>
+              <text class="row-label">定时时长</text>
               
-              <picker 
-                mode="selector" 
-                :range="intervalOptions" 
-                :value="selectedInterval" 
-                @change="onIntervalChange" 
-                :disabled="!timerEnabled || !store.state.isOnline"
-              >
-                <view class="picker-trigger">
-                  <text class="picker-value">{{ intervalOptions[selectedInterval] }}</text>
-                  <text class="picker-arrow">▶</text>
+              <view class="duration-editor">
+                <view class="duration-slider-row">
+                  <text class="duration-unit">时</text>
+                  <slider
+                    class="duration-slider"
+                    :value="durationHour"
+                    :min="0"
+                    :max="2"
+                    :step="1"
+                    :disabled="!store.state.isOnline"
+                    activeColor="#00f0ff"
+                    backgroundColor="rgba(148, 163, 184, 0.22)"
+                    block-color="#00f0ff"
+                    :block-size="18"
+                    @changing="onDurationSliderChanging('hour', $event)"
+                    @change="onDurationSliderChange('hour', $event)"
+                  />
+                  <text class="duration-value">{{ durationHour }}时</text>
                 </view>
-              </picker>
+                <view class="duration-slider-row">
+                  <text class="duration-unit">分</text>
+                  <slider
+                    class="duration-slider"
+                    :value="durationMinute"
+                    :min="0"
+                    :max="59"
+                    :step="1"
+                    :disabled="!store.state.isOnline"
+                    activeColor="#00f0ff"
+                    backgroundColor="rgba(148, 163, 184, 0.22)"
+                    block-color="#00f0ff"
+                    :block-size="18"
+                    @changing="onDurationSliderChanging('minute', $event)"
+                    @change="onDurationSliderChange('minute', $event)"
+                  />
+                  <text class="duration-value">{{ durationMinute }}分</text>
+                </view>
+                <view class="duration-slider-row">
+                  <text class="duration-unit">秒</text>
+                  <slider
+                    class="duration-slider"
+                    :value="durationSecond"
+                    :min="0"
+                    :max="59"
+                    :step="1"
+                    :disabled="!store.state.isOnline"
+                    activeColor="#00f0ff"
+                    backgroundColor="rgba(148, 163, 184, 0.22)"
+                    block-color="#00f0ff"
+                    :block-size="18"
+                    @changing="onDurationSliderChanging('second', $event)"
+                    @change="onDurationSliderChange('second', $event)"
+                  />
+                  <text class="duration-value">{{ durationSecond }}秒</text>
+                </view>
+              </view>
             </view>
           </view>
         </view>
@@ -184,7 +231,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { onHide, onShow } from '@dcloudio/uni-app'
 import store from '@/utils/store'
 import PageShell from '@/components/ui/PageShell.vue'
@@ -203,7 +250,7 @@ interface ControlPageSettings {
   selectedMode?: string
   selectedReminders?: string[]
   timerEnabled?: boolean
-  selectedInterval?: number
+  customDurationSec?: number
 }
 
 const reminderMaskMap: Record<string, number> = {
@@ -219,7 +266,9 @@ const voiceCompatIdentifiers = [
   'voiceSwitch',
 ] as const
 
-const intervalSeconds = [900, 1800, 3600, 7200]
+const TIMER_MIN_SEC = 1
+const TIMER_MAX_SEC = 7200
+const TIMER_DEFAULT_SEC = 15 * 60
 const modeValueMap: Record<string, number> = {
   posture: 0,
   clock: 1,
@@ -245,10 +294,68 @@ const selectedMode = ref('posture')
 const selectedReminders = ref<string[]>(['voice', 'light'])
 
 const timerEnabled = ref(false)
-const intervalOptions = ref(['15分钟', '30分钟', '1小时', '2小时'])
-const selectedInterval = ref(1)
+const customDurationSec = ref(TIMER_DEFAULT_SEC)
+const lastCommittedDurationSec = ref(TIMER_DEFAULT_SEC)
+const durationHour = ref(0)
+const durationMinute = ref(15)
+const durationSecond = ref(0)
 const selfTestLoading = ref(false)
 const SELF_TEST_SEQ_KEY = 'selfTestSeq'
+const lastUserActionTime = ref(0)
+const BOUNCE_GUARD_MS = 3000
+const TIMER_MODE = 'timer'
+
+const isTimerMode = computed(() => selectedMode.value === TIMER_MODE)
+const timerStatusText = computed(() => {
+  if (!store.state.isOnline) return '设备离线'
+  if (timerEnabled.value) return '计时中'
+  return isTimerMode.value ? '已暂停' : '未进入定时器模式'
+})
+
+function clampTimerDuration(value: number): number {
+  if (!Number.isFinite(value)) return TIMER_MIN_SEC
+  if (value < TIMER_MIN_SEC) return TIMER_MIN_SEC
+  if (value > TIMER_MAX_SEC) return TIMER_MAX_SEC
+  return Math.round(value)
+}
+
+function durationToParts(totalSec: number): [number, number, number] {
+  const sec = clampTimerDuration(totalSec)
+  const hours = Math.floor(sec / 3600)
+  const minutes = Math.floor((sec % 3600) / 60)
+  const seconds = sec % 60
+  return [hours, minutes, seconds]
+}
+
+function syncDurationParts(totalSec: number) {
+  const [hours, minutes, seconds] = durationToParts(totalSec)
+  durationHour.value = hours
+  durationMinute.value = minutes
+  durationSecond.value = seconds
+}
+
+function durationPartsToSeconds(): number {
+  return clampTimerDuration(
+    durationHour.value * 3600 + durationMinute.value * 60 + durationSecond.value
+  )
+}
+
+function parseDurationControlValue(value: unknown): number {
+  const n = Number(value)
+  if (!Number.isFinite(n) || n < 0) return 0
+  return Math.floor(n)
+}
+
+function setDurationPart(part: 'hour' | 'minute' | 'second', value: number) {
+  const next = parseDurationControlValue(value)
+  if (part === 'hour') {
+    durationHour.value = Math.min(2, next)
+  } else if (part === 'minute') {
+    durationMinute.value = Math.min(59, next)
+  } else {
+    durationSecond.value = Math.min(59, next)
+  }
+}
 
 function getReminderMask(values: string[]): number {
   // 云端用位掩码存提醒开关，前端多选值在这里收敛成一个整数。
@@ -256,15 +363,14 @@ function getReminderMask(values: string[]): number {
 }
 
 async function syncVoiceCompat(enabled: boolean) {
-  // 不同固件历史版本字段名不一致，按兼容列表逐个探测命中。
+  // alertModeMask 已覆盖语音控制，以下仅保留历史兼容探测，静默失败。
   for (const identifier of voiceCompatIdentifiers) {
-    const ok = await setDeviceProperty({ [identifier]: enabled })
+    const ok = await setDeviceProperty({ [identifier]: enabled }, true)
     if (ok) {
       console.info(`[Control] 语音兼容字段命中: ${identifier}`)
       return
     }
   }
-  console.warn('[Control] 未命中语音兼容字段，保留 alertModeMask 控制')
 }
 
 function loadSettings() {
@@ -274,10 +380,16 @@ function loadSettings() {
     if (saved) {
       selectedMode.value = store.state.currentMode || saved.selectedMode || 'posture'
       selectedReminders.value = saved.selectedReminders || ['voice', 'light']
-      timerEnabled.value = saved.timerEnabled || false
-      selectedInterval.value = saved.selectedInterval ?? 1
+      timerEnabled.value = selectedMode.value === TIMER_MODE && (saved.timerEnabled || false)
+      customDurationSec.value = clampTimerDuration(saved.customDurationSec ?? TIMER_DEFAULT_SEC)
+      lastCommittedDurationSec.value = customDurationSec.value
+      syncDurationParts(customDurationSec.value)
     } else {
       selectedMode.value = store.state.currentMode || 'posture'
+      timerEnabled.value = false
+      customDurationSec.value = TIMER_DEFAULT_SEC
+      lastCommittedDurationSec.value = TIMER_DEFAULT_SEC
+      syncDurationParts(TIMER_DEFAULT_SEC)
     }
   } catch (e) {
     console.error('[Control] 加载设置失败:', e)
@@ -289,7 +401,7 @@ function saveSettings() {
     selectedMode: selectedMode.value,
     selectedReminders: selectedReminders.value,
     timerEnabled: timerEnabled.value,
-    selectedInterval: selectedInterval.value,
+    customDurationSec: customDurationSec.value,
   })
 }
 
@@ -300,6 +412,7 @@ async function switchMode(mode: string) {
   }
   if (selectedMode.value === mode) return
 
+  lastUserActionTime.value = Date.now()
   const oldMode = selectedMode.value
   selectedMode.value = mode
 
@@ -312,8 +425,11 @@ async function switchMode(mode: string) {
   }
 
   store.state.currentMode = mode
-  await store.confirmDeviceSync()
+  if (mode !== TIMER_MODE) {
+    timerEnabled.value = false
+  }
   saveSettings()
+  // 不立即拉取状态：设备刚切换还来不及上报，拉回来的旧值会覆盖本地更新
 }
 
 async function toggleReminder(value: string) {
@@ -345,7 +461,6 @@ async function toggleReminder(value: string) {
     await syncVoiceCompat(selectedReminders.value.includes('voice'))
   }
 
-  await store.confirmDeviceSync()
   saveSettings()
 }
 
@@ -358,41 +473,78 @@ async function onTimerSwitch(e: unknown) {
   }
 
   const oldValue = timerEnabled.value
+  const oldMode = selectedMode.value
   timerEnabled.value = value
+  customDurationSec.value = durationPartsToSeconds()
+  syncDurationParts(customDurationSec.value)
 
-  const success = await setDeviceProperty({ timerRunning: timerEnabled.value })
+  const params: Record<string, number | boolean> = {
+    timerRunning: timerEnabled.value,
+    alertModeMask: getReminderMask(selectedReminders.value),
+  }
+  if (timerEnabled.value) {
+    params.currentMode = modeValueMap.timer
+    params.timerDurationSec = customDurationSec.value
+  }
+
+  const success = await setDeviceProperty(params)
   if (!success) {
     timerEnabled.value = oldValue
+    selectedMode.value = oldMode
+    customDurationSec.value = lastCommittedDurationSec.value
+    syncDurationParts(lastCommittedDurationSec.value)
     uni.showToast({ title: '设置失败，请重试', icon: 'none' })
     return
   }
 
-  await store.confirmDeviceSync()
+  lastCommittedDurationSec.value = customDurationSec.value
+  if (timerEnabled.value) {
+    selectedMode.value = TIMER_MODE
+    store.state.currentMode = TIMER_MODE
+  }
+
   saveSettings()
 }
 
-async function onIntervalChange(e: unknown) {
-  const value = pickEventValue<number>(e)
-  if (typeof value !== 'number') return
+function onDurationSliderChanging(part: 'hour' | 'minute' | 'second', e: unknown) {
+  setDurationPart(part, Number(pickEventValue<number>(e)))
+}
+
+function onDurationSliderChange(part: 'hour' | 'minute' | 'second', e: unknown) {
+  setDurationPart(part, Number(pickEventValue<number>(e)))
+  void commitDurationParts()
+}
+
+async function commitDurationParts() {
   if (!store.state.isOnline) {
     uni.showToast({ title: '设备未连接', icon: 'none' })
+    syncDurationParts(customDurationSec.value)
     return
   }
 
-  const oldValue = selectedInterval.value
-  selectedInterval.value = value
+  const next = durationPartsToSeconds()
+  if (next === lastCommittedDurationSec.value) {
+    customDurationSec.value = next
+    syncDurationParts(next)
+    return
+  }
+
+  const oldValue = lastCommittedDurationSec.value
+  customDurationSec.value = next
+  syncDurationParts(next)
 
   const success = await setDeviceProperty({
-    timerDurationSec: intervalSeconds[selectedInterval.value],
+    timerDurationSec: next,
   })
 
   if (!success) {
-    selectedInterval.value = oldValue
+    customDurationSec.value = oldValue
+    syncDurationParts(oldValue)
     uni.showToast({ title: '设置失败，请重试', icon: 'none' })
     return
   }
 
-  await store.confirmDeviceSync()
+  lastCommittedDurationSec.value = next
   saveSettings()
 }
 
@@ -408,7 +560,10 @@ async function runHardwareSelfTest() {
   uni.setStorageSync(SELF_TEST_SEQ_KEY, nextSeq)
 
   const trigger = nextSeq
-  const success = await setDeviceProperty({ selfTest: trigger })
+  const success = await setDeviceProperty({
+    alertModeMask: getReminderMask(selectedReminders.value),
+    selfTest: trigger,
+  })
   selfTestLoading.value = false
 
   if (!success) {
@@ -416,17 +571,20 @@ async function runHardwareSelfTest() {
     return
   }
 
-  await store.confirmDeviceSync()
   uni.showToast({ title: '已触发自检', icon: 'success' })
 }
 
 watch(
   () => store.state.currentMode,
   (mode) => {
-    if (mode && selectedMode.value !== mode) {
-      selectedMode.value = mode
-      saveSettings()
+    if (!mode || selectedMode.value === mode) return
+    // 用户刚操作过 3 秒内，忽略轮询拉回来的旧值，防止弹回
+    if (Date.now() - lastUserActionTime.value < BOUNCE_GUARD_MS) return
+    selectedMode.value = mode
+    if (mode !== TIMER_MODE) {
+      timerEnabled.value = false
     }
+    saveSettings()
   }
 )
 
@@ -863,11 +1021,22 @@ onHide(() => {
       .timer-icon {
         font-size: 36rpx;
       }
+
+      .timer-title-content {
+        display: flex;
+        flex-direction: column;
+        gap: 4rpx;
+      }
       
       .timer-title {
         font-size: 30rpx;
         font-weight: 700;
         color: var(--text-primary);
+      }
+
+      .timer-status {
+        font-size: 22rpx;
+        color: var(--text-tertiary);
       }
     }
   }
@@ -884,34 +1053,54 @@ onHide(() => {
     
     .timer-row {
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       justify-content: space-between;
+      gap: 20rpx;
       
       .row-label {
         font-size: 28rpx;
         color: var(--text-secondary);
+        padding-top: 18rpx;
       }
       
-      .picker-trigger {
+      .duration-editor {
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-end;
+        gap: 12rpx;
+        flex: 1;
+      }
+
+      .duration-slider-row {
         display: flex;
         align-items: center;
         gap: 12rpx;
-        padding: 16rpx 24rpx;
+        width: 100%;
+        padding: 8rpx 14rpx;
         background: var(--bg-elevated);
-        border-radius: var(--radius-pill);
         border: 1rpx solid var(--border-subtle);
-        
-        .picker-value {
-          font-size: 28rpx;
-          color: var(--neon-cyan);
-          font-weight: 700;
+        border-radius: var(--radius-sm);
+
+        .duration-slider {
+          flex: 1;
+          margin: 0;
         }
-        
-        .picker-arrow {
-          font-size: 20rpx;
+
+        .duration-unit {
+          width: 28rpx;
+          font-size: 24rpx;
           color: var(--text-tertiary);
         }
+
+        .duration-value {
+          width: 72rpx;
+          font-size: 24rpx;
+          color: var(--neon-cyan);
+          font-weight: 700;
+          text-align: right;
+        }
       }
+
     }
   }
 }
