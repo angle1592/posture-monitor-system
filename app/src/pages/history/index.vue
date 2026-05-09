@@ -637,10 +637,6 @@ function renderHistoryCanvases() {
   })
 }
 
-watch([weekChartPoints, selectedBucketMinutes], () => {
-  renderHistoryCanvases()
-})
-
 onShow(() => {
   showAllRecords.value = false
   selectedDateKey.value = 'today'
@@ -930,7 +926,7 @@ onShow(() => {
 }
 
 .week-footer--ticks {
-  gap: 10rpx;
+  gap: 0;
 }
 
 .week-tick {
