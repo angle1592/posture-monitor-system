@@ -30,7 +30,7 @@ import type { RealtimeConnectionState, RealtimePropertyPatch, RealtimeTransportC
 type PollingProfile = 'background' | 'normal' | 'realtime'
 
 interface LocalStats {
-  // 本地统计归档日期（yyyy-MM-dd），用于判断是否与“今天”同一天。
+  // 本地统计归档日期（yyyy-MM-dd），用于判断是否与”今天”同一天。
   date: string
   // 当天异常姿势累计次数（由姿势从正常切换到异常时递增）。
   abnormalCount: number
@@ -38,6 +38,9 @@ interface LocalStats {
   goodMinutes: number
   // 当天总监测分钟数（监控开启时累计）。
   totalMinutes: number
+  // 健康评分用——正常/异常轮询计数
+  normalPolls?: number
+  abnormalPolls?: number
 }
 
 interface LocalSettings {
@@ -231,6 +234,8 @@ interface AppState {
   todayAbnormalCount: number   // 今日异常次数（姿势边沿触发计数）
   todayGoodMinutes: number     // 今日良好分钟数（按轮询增量累计）
   todayTotalMinutes: number    // 今日总监测分钟数（监控开启时累计）
+  todayNormalPolls: number     // 今日正常姿势轮询次数（健康评分用）
+  todayAbnormalPolls: number   // 今日异常姿势轮询次数（健康评分用）
   usageRemainderMs: number     // 分钟换算余数（毫秒），避免小于1分钟的采样损失
 
   // 控制状态 (从设备同步或本地设置)
@@ -268,6 +273,8 @@ const state = reactive<AppState>({
   todayAbnormalCount: 0,
   todayGoodMinutes: 0,
   todayTotalMinutes: 0,
+  todayNormalPolls: 0,
+  todayAbnormalPolls: 0,
   usageRemainderMs: 0,
 
   monitoringEnabled: true,
@@ -315,10 +322,11 @@ const postureType = computed(() => {
   return 'abnormal'
 })
 
-/** 今日健康评分 (0-100) */
+/** 今日健康评分 (0-100)，与历史页 count-based 算法一致 */
 const healthScore = computed(() => {
-  if (state.todayTotalMinutes === 0) return 100
-  return Math.round((state.todayGoodMinutes / state.todayTotalMinutes) * 100)
+  const tracked = state.todayNormalPolls + state.todayAbnormalPolls
+  if (tracked === 0) return 100
+  return Math.round((state.todayNormalPolls / tracked) * 100)
 })
 
 /** 最后更新时间文本 */
@@ -429,6 +437,14 @@ async function fetchLatest() {
 
     applyProperties(props, now)
 
+    // 每次轮询计数一次，与历史页 count-based 算法一致
+    const pollPosture = normalizePostureValue(state.postureType)
+    if (isHealthyPosture(pollPosture)) {
+      state.todayNormalPolls += 1
+    } else if (isAbnormalPosture(pollPosture)) {
+      state.todayAbnormalPolls += 1
+    }
+
     const onlineByPropertyStream = inferOnlineFromProperties(props, now)
     state.isOnline = props && props.length > 0 ? onlineByPropertyStream : status
     accumulateUsage(elapsedMs)
@@ -524,6 +540,8 @@ function saveLocalStats() {
     abnormalCount: state.todayAbnormalCount,
     goodMinutes: state.todayGoodMinutes,
     totalMinutes: state.todayTotalMinutes,
+    normalPolls: state.todayNormalPolls,
+    abnormalPolls: state.todayAbnormalPolls,
   })
 }
 
@@ -537,6 +555,8 @@ function loadLocalStats() {
         state.todayAbnormalCount = saved.abnormalCount || 0
         state.todayGoodMinutes = saved.goodMinutes || 0
         state.todayTotalMinutes = saved.totalMinutes || 0
+        state.todayNormalPolls = saved.normalPolls || 0
+        state.todayAbnormalPolls = saved.abnormalPolls || 0
       }
       // 日期不匹配说明已跨天，保持默认值 0 并等待新一天重新累计。
     }
@@ -573,6 +593,8 @@ function resetTodayStats() {
   state.todayAbnormalCount = 0
   state.todayGoodMinutes = 0
   state.todayTotalMinutes = 0
+  state.todayNormalPolls = 0
+  state.todayAbnormalPolls = 0
   state.usageRemainderMs = 0
   saveLocalStats()
 }
