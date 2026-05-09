@@ -75,8 +75,11 @@ def daily_stats(
 ) -> dict:
     """当天统计：良好时长、异常次数、健康评分。
 
-    基于每条记录间隔估算时长（约 10 秒/条）。
+    时长按实际使用时段计算：记录间隔超过 5 分钟视为不同会话，
+    只累加各会话首尾之间的时长，再按良好记录占比分配。
     """
+    SESSION_GAP_MINUTES = 5  # 间隔超过此值视为不同会话
+
     if date:
         try:
             target = datetime.strptime(date, "%Y-%m-%d").date()
@@ -88,9 +91,16 @@ def daily_stats(
     start = datetime.combine(target, datetime.min.time())
     end = start + timedelta(days=1)
 
+    # 只取有人在座的评分记录（排除 no_person / unknown）
     records = (
         db.query(PostureRecord)
-        .filter(PostureRecord.onenet_time >= start, PostureRecord.onenet_time < end)
+        .filter(
+            PostureRecord.onenet_time >= start,
+            PostureRecord.onenet_time < end,
+            PostureRecord.person_present == True,
+            PostureRecord.posture_type.in_(list(HEALTHY_TYPES | ABNORMAL_TYPES)),
+        )
+        .order_by(PostureRecord.onenet_time.asc())
         .all()
     )
 
@@ -98,13 +108,46 @@ def daily_stats(
     if total == 0:
         return {"good_posture_minutes": 0, "abnormal_count": 0, "health_score": 100}
 
+    # 按间隔拆分会话
+    sessions: list[list] = [[records[0]]]
+    for r in records[1:]:
+        gap = (r.onenet_time - sessions[-1][-1].onenet_time).total_seconds()
+        if gap > SESSION_GAP_MINUTES * 60:
+            sessions.append([])
+        sessions[-1].append(r)
+
+    # 计算各会话时长和良好时长
+    total_session_seconds = 0
+    good_seconds = 0
+    abnormal = 0
+
+    for session in sessions:
+        if len(session) < 2:
+            # 单条记录按 10 秒估算
+            session_seconds = 10
+        else:
+            session_seconds = (
+                session[-1].onenet_time - session[0].onenet_time
+            ).total_seconds()
+            # 至少按记录数 * 10 秒算（防止时间差为 0）
+            session_seconds = max(session_seconds, len(session) * 10)
+
+        s_healthy = sum(1 for r in session if r.posture_type in HEALTHY_TYPES)
+        s_abnormal = sum(1 for r in session if r.posture_type in ABNORMAL_TYPES)
+        s_scored = s_healthy + s_abnormal
+
+        abnormal += s_abnormal
+        total_session_seconds += session_seconds
+
+        if s_scored > 0:
+            good_seconds += session_seconds * (s_healthy / s_scored)
+
+    good_minutes = round(good_seconds / 60)
+    total_scored = sum(
+        1 for r in records if r.posture_type in HEALTHY_TYPES | ABNORMAL_TYPES
+    )
     healthy = sum(1 for r in records if r.posture_type in HEALTHY_TYPES)
-    abnormal = sum(1 for r in records if r.posture_type in ABNORMAL_TYPES)
-    # 每条约 10 秒，转分钟
-    good_minutes = round(healthy * 10 / 60)
-    # 健康评分 = 正常占比 * 100（排除无人和未知）
-    scored = healthy + abnormal
-    score = round(healthy / scored * 100) if scored > 0 else 100
+    score = round(healthy / total_scored * 100) if total_scored > 0 else 100
 
     return {
         "good_posture_minutes": good_minutes,
