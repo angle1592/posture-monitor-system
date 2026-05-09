@@ -3,13 +3,7 @@
     <view class="container">
       <view class="page-header">
         <SectionHeader title="历史记录" subtitle="DATA HISTORY">
-          <template #right>
-            <view class="date-picker" @click="showDatePicker">
-              <text class="picker-icon">◴</text>
-              <text class="picker-text">{{ selectedDate }}</text>
-              <text class="picker-arrow">▼</text>
-            </view>
-          </template>
+          <template #right></template>
         </SectionHeader>
       </view>
 
@@ -487,29 +481,6 @@ async function fetchHistoryData() {
   renderHistoryCanvases(true)
 }
 
-function showDatePicker() {
-  uni.showActionSheet({
-    itemList: ['今天', '昨天', '最近7天'],
-    success: (result) => {
-      showAllRecords.value = false
-      const now = new Date()
-      if (result.tapIndex === 0) {
-        selectedDateKey.value = 'today'
-        selectedDate.value = formatLocalDate(now)
-      } else if (result.tapIndex === 1) {
-        const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000)
-        selectedDateKey.value = 'yesterday'
-        selectedDate.value = formatLocalDate(yesterday)
-      } else {
-        const start = new Date(now)
-        start.setDate(start.getDate() - 6)
-        selectedDateKey.value = 'range7'
-        selectedDate.value = `${formatLocalDate(start)} ~ ${formatLocalDate(now)}`
-      }
-      applySelectionStats()
-    }
-  })
-}
 
 function selectDay(day: DayData) {
   showAllRecords.value = false
@@ -536,8 +507,8 @@ function weekTickStyle(index: number): Record<string, string> {
 }
 
 function weekChartY(score: number): number {
-  const top = 24
-  const height = 150
+  const top = 12
+  const height = 80
   return top + ((100 - score) / 100) * height
 }
 
@@ -599,14 +570,14 @@ function drawChartCanvas(
 ) {
   const context = uni.createCanvasContext(canvasId)
   const width = 720
-  const height = 220
+  const height = 130
 
   context.clearRect(0, 0, width, height)
 
   context.setStrokeStyle('rgba(255, 255, 255, 0.08)')
   context.setLineWidth(1)
   gridScores.forEach((score) => {
-    const y = score === 100 ? 24 : score === 70 ? 69 : 114
+    const y = weekChartY(score)
     context.beginPath()
     context.moveTo(24, y)
     context.lineTo(width - 24, y)
@@ -673,36 +644,6 @@ onShow(() => {
   animation: slide-up var(--duration-slow) var(--ease-out) both;
 }
 
-.date-picker {
-  display: flex;
-  align-items: center;
-  gap: 12rpx;
-  padding: 16rpx 24rpx;
-  background: var(--bg-tertiary);
-  border-radius: var(--radius-pill);
-  border: 1rpx solid var(--border-subtle);
-
-  .picker-icon {
-    font-size: 24rpx;
-    color: var(--neon-cyan);
-  }
-
-  .picker-text {
-    font-size: 26rpx;
-    color: var(--text-primary);
-    font-weight: 600;
-  }
-
-  .picker-arrow {
-    font-size: 20rpx;
-    color: var(--text-tertiary);
-  }
-
-  &:active {
-    border-color: var(--neon-cyan);
-    box-shadow: var(--neon-cyan-glow);
-  }
-}
 
 .stats-grid {
   display: grid;
@@ -925,7 +866,7 @@ onShow(() => {
 }
 
 .curve-canvas--week {
-  height: 216rpx;
+  height: 120rpx;
 }
 
 .curve-footer {
