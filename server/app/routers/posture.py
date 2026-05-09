@@ -56,8 +56,8 @@ def posture_history(
     else:
         target = datetime.now(CN).date()
 
-    start = datetime.combine(target, datetime.min.time())
-    end = start + timedelta(days=days)
+    end = datetime.combine(target, datetime.min.time()) + timedelta(days=1)
+    start = end - timedelta(days=days)
 
     records = (
         db.query(PostureRecord)
