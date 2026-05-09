@@ -203,33 +203,51 @@ export async function setDeviceProperty(
  * GET /thingmodel/query-device-property-history?...&start_time=...&end_time=...
  * 返回: { list: HistoryDataPoint[] }
  */
-export async function queryPropertyHistory(
-  identifier: string,
-  days: number = 6
-): Promise<HistoryDataPoint[]> {
-  try {
-    // 端点：GET /thingmodel/query-device-property-history
-    // 返回：{ list: HistoryDataPoint[] }；异常时返回空数组。
-    // 注意：OneNET 限制查询跨度必须小于 7 天，故默认用 6 天
-    const end_time = Date.now()
-    const start_time = end_time - days * 86400000
-    const q = qs({
-      product_id: CONFIG.productId,
-      device_name: CONFIG.deviceName,
-      identifier,
-      start_time,
-      end_time,
-      limit: 1000,
-      sort: 'DESC',
+/**
+ * 从数据库后端获取历史数据
+ */
+const BACKEND_BASE = (import.meta.env.VITE_API_BASE_URL || 'http://47.119.146.203:8001').replace(/\/+$/, '')
+
+/** 后端 API 专用请求（返回纯 JSON，非 OneNET 包装格式） */
+function backendRequest<T>(url: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    uni.request({
+      url,
+      method: 'GET',
+      success: (res) => {
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          reject(new Error(`HTTP ${res.statusCode}`))
+          return
+        }
+        resolve(res.data as T)
+      },
+      fail: (err) => reject(err),
     })
-    const result = await request<{ list: HistoryDataPoint[] }>(
-      `${CONFIG.thingmodelBase}/query-device-property-history?${q}`
-    )
-    return result?.list || []
+  })
+}
+
+async function queryBackendHistory(days: number): Promise<HistoryDataPoint[]> {
+  try {
+    const records = await backendRequest<Array<{
+      onenet_time: string
+      posture_type: string
+    }>>(`${BACKEND_BASE}/api/posture/history?days=${days}`)
+    return records.map((r) => ({
+      time: new Date(r.onenet_time).getTime(),
+      value: r.posture_type,
+    }))
   } catch (e) {
-    console.error('[OneNET] 查询历史失败:', e)
+    console.error('[Backend] queryHistory failed:', e)
     return []
   }
+}
+
+export async function queryPropertyHistory(
+  _identifier: string,
+  days: number = 7
+): Promise<HistoryDataPoint[]> {
+  // 历史数据从数据库后端获取（全量，无 OneNET 条数限制）
+  return queryBackendHistory(days)
 }
 
 /**
